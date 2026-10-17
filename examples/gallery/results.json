@@ -1,0 +1,73 @@
+{
+  "browser": "Chromium 151.0.7922.34",
+  "cases": [
+    {
+      "id": "layout-shift",
+      "changedPixels": 16322,
+      "changedPercentage": 2.8336805555555555,
+      "before": {
+        "width": 960,
+        "height": 600
+      },
+      "after": {
+        "width": 960,
+        "height": 600
+      },
+      "highlighted": "layout-shift/highlighted.png",
+      "comparison": "layout-shift/comparison.png",
+      "verified": true
+    },
+    {
+      "id": "missing-image",
+      "changedPixels": 19413,
+      "changedPercentage": 3.595,
+      "before": {
+        "width": 900,
+        "height": 600
+      },
+      "after": {
+        "width": 900,
+        "height": 600
+      },
+      "highlighted": "missing-image/highlighted.png",
+      "comparison": "missing-image/comparison.png",
+      "verified": true
+    },
+    {
+      "id": "mobile-clipping",
+      "changedPixels": 7185,
+      "changedPercentage": 2.18282901932191,
+      "before": {
+        "width": 390,
+        "height": 844
+      },
+      "after": {
+        "width": 390,
+        "height": 844
+      },
+      "highlighted": "mobile-clipping/highlighted.png",
+      "comparison": "mobile-clipping/comparison.png",
+      "verified": true
+    },
+    {
+      "id": "page-growth",
+      "changedPixels": 162000,
+      "changedPercentage": 23.076923076923077,
+      "before": {
+        "width": 900,
+        "height": 600
+      },
+      "after": {
+        "width": 900,
+        "height": 780
+      },
+      "highlighted": "page-growth/highlighted.png",
+      "comparison": "page-growth/comparison.png",
+      "verified": true
+    }
+  ],
+  "controls": {
+    "unchangedPixels": 0,
+    "removedSectionPixels": 162000
+  }
+}

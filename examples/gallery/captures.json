@@ -1,0 +1,52 @@
+{
+  "browser": "Chromium 151.0.7922.34",
+  "source": "Self-contained HTML test fixtures",
+  "cases": [
+    {
+      "id": "layout-shift",
+      "title": "Checkout layout shift",
+      "description": "The order summary moves down by 32 pixels.",
+      "before": "layout-shift/before.png",
+      "after": "layout-shift/after.png",
+      "allowedBounds": {
+        "x": 628,
+        "y": 196,
+        "right": 922,
+        "bottom": 563
+      }
+    },
+    {
+      "id": "missing-image",
+      "title": "Missing product image",
+      "description": "The lamp image disappears; the rest of the page stays in place. JPEG inputs.",
+      "before": "missing-image/before.jpg",
+      "after": "missing-image/after.jpg",
+      "allowedBounds": {
+        "x": 20,
+        "y": 124,
+        "right": 442,
+        "bottom": 506
+      }
+    },
+    {
+      "id": "mobile-clipping",
+      "title": "Mobile button clipping",
+      "description": "A narrower button clips its label. Mobile browser fixture, 390 × 844.",
+      "before": "mobile-clipping/before.png",
+      "after": "mobile-clipping/after.png",
+      "allowedBounds": {
+        "x": 53,
+        "y": 585,
+        "right": 337,
+        "bottom": 640
+      }
+    },
+    {
+      "id": "page-growth",
+      "title": "Full-page height change",
+      "description": "A new 180-pixel section extends the page from 600 to 780 pixels.",
+      "before": "page-growth/before.png",
+      "after": "page-growth/after.png"
+    }
+  ]
+}

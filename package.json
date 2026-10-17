@@ -1,0 +1,46 @@
+{
+  "name": "diffglow",
+  "version": "0.1.0-alpha.1",
+  "type": "module",
+  "description": "Compare screenshots and highlight changes over the current image.",
+  "license": "Apache-2.0",
+  "author": "M1chaelChen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/M1chaelChen/diffglow.git"
+  },
+  "homepage": "https://github.com/M1chaelChen/diffglow#readme",
+  "bugs": { "url": "https://github.com/M1chaelChen/diffglow/issues" },
+  "keywords": ["visual-regression", "screenshot", "image-diff", "cli", "testing"],
+  "bin": { "diffglow": "dist/cli.js" },
+  "exports": {},
+  "files": ["dist/*.js", "README.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "licenses/", "docs/demo.png"],
+  "publishConfig": { "access": "public", "tag": "alpha", "registry": "https://registry.npmjs.org/" },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "diff": "node --import tsx src/cli.ts",
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "example": "node --import tsx examples/generate.ts",
+    "examples:verify": "node --import tsx examples/verify-gallery.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "licenses:check": "node scripts/dependency-licenses.mjs --check",
+    "licenses:update": "node scripts/dependency-licenses.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "audit:public": "node scripts/audit-public.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run examples:verify && npm run licenses:check && npm run verify:package && npm run audit:public",
+    "release:prepare": "node scripts/prepare-release.mjs"
+  },
+  "dependencies": {
+    "pixelmatch": "8.0.0",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+/diff.png
+/research/
+/artifacts/
+*.tgz
+.env
+.env.*
+!.env.example
+.npmrc
+*.log
+coverage/
+.cache/

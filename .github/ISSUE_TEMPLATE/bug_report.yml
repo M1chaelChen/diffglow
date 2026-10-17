@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible CLI or image comparison problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic images when possible. Do not attach credentials or private/customer screenshots. Report security vulnerabilities through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Diffglow version
+      description: Output of diffglow --version.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Node.js version
+      placeholder: macOS 15, Node.js 24.x
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: Include the complete command, exit code, and relevant output. Remove private paths.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Describe how to reproduce this. Optional synthetic input and output images are useful.
+    validations:
+      required: true

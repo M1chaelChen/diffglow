@@ -1,0 +1,235 @@
+name: Prepare or stage alpha release
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full reviewed main commit SHA (must equal the selected main HEAD)
+        required: true
+        type: string
+      expected_version:
+        description: Reviewed alpha version from package.json
+        required: true
+        default: 0.1.0-alpha.1
+        type: string
+      stage_with_oidc:
+        description: Stage after verification using configured npm trust; leave false to prepare a review bundle only
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diffglow-npm-alpha
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate reviewed release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Require the canonical repository and exact reviewed main commit
+        id: release
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const { EXPECTED_SHA: sha, EXPECTED_VERSION: version } = process.env;
+          if (process.env.GITHUB_REPOSITORY !== 'M1chaelChen/diffglow' || event.repository.fork) {
+            throw new Error('Release staging is restricted to M1chaelChen/diffglow.');
+          }
+          if (event.repository.private || event.repository.default_branch !== 'main') {
+            throw new Error('The public repository must use main as its default branch.');
+          }
+          if (process.env.GITHUB_REF !== 'refs/heads/main' ||
+              process.env.GITHUB_WORKFLOW_REF !== 'M1chaelChen/diffglow/.github/workflows/release.yml@refs/heads/main') {
+            throw new Error('Dispatch release.yml from main after reviewing the release commit.');
+          }
+          if (!/^[a-f0-9]{40}$/.test(sha ?? '') || sha !== process.env.GITHUB_SHA) {
+            throw new Error('expected_sha must be the full reviewed main HEAD selected for this dispatch.');
+          }
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-alpha\.(0|[1-9]\d*)$/.test(version ?? '')) {
+            throw new Error('Only explicit alpha versions such as 0.1.0-alpha.1 can be staged.');
+          }
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (pkg.name !== 'diffglow' || pkg.version !== version || pkg.private === true) {
+            throw new Error('package.json must describe the reviewed public diffglow alpha version.');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\nversion=${version}\n`);
+          NODE
+
+  prepare:
+    name: Prepare the canonical release candidate
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install the release npm version
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+      - name: Prepare and audit the release candidate once
+        run: npm run release:prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: artifacts/release/${{ needs.validate.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    name: Verify ${{ matrix.os }} / Node ${{ matrix.node }}
+    needs: [validate, prepare]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Install the release npm version
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+      - name: Download the exact canonical candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: ${{ runner.temp }}/diffglow-candidate/
+      - name: Check source, examples, clean installed package, and public contents
+        env:
+          DIFFGLOW_TARBALL: ${{ runner.temp }}/diffglow-candidate/diffglow-${{ needs.validate.outputs.version }}.tgz
+        run: npm run release:prepare
+      - name: Retain this platform's release review bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-review-${{ runner.os }}-node${{ matrix.node }}
+          path: artifacts/release/${{ needs.validate.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  stage:
+    name: Stage audited alpha for human approval
+    if: inputs.stage_with_oidc
+    needs: [validate, prepare, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-staging
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install npm with staged publishing and OIDC support
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+      - name: Download the original audited candidate without rebuilding
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: artifacts/release/${{ needs.validate.outputs.version }}/
+      - name: Verify the tarball checksum and avoid republishing an existing version
+        id: artifact
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { resolve } from 'node:path';
+          const version = process.env.EXPECTED_VERSION;
+          const directory = resolve('artifacts', 'release', version);
+          const filename = `diffglow-${version}.tgz`;
+          const tarball = resolve(directory, filename);
+          const bytes = readFileSync(tarball);
+          const sha256 = createHash('sha256').update(bytes).digest('hex');
+          const checksums = readFileSync(resolve(directory, 'SHA256SUMS'), 'utf8')
+            .trim().split(/\r?\n/).map(line => /^([a-f0-9]{64}) [ *](.+)$/.exec(line));
+          const matching = checksums.filter(entry => entry?.[2] === filename);
+          if (matching.length !== 1 || matching[0][1] !== sha256) {
+            throw new Error('The downloaded tarball does not match its audited SHA256SUMS entry.');
+          }
+          const report = JSON.parse(readFileSync(resolve(directory, 'package-report.json'), 'utf8'));
+          if (report.status !== 'passed' || report.sha256 !== sha256) {
+            throw new Error('The package verification report must pass and identify the same audited tarball.');
+          }
+          const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+          const response = await fetch(`https://registry.npmjs.org/diffglow/${encodeURIComponent(version)}`, {
+            signal: AbortSignal.timeout(30_000)
+          });
+          let shouldStage;
+          if (response.status === 404) {
+            shouldStage = true;
+          } else if (response.ok) {
+            const published = await response.json();
+            if (published.name !== 'diffglow' || published.version !== version || published.dist?.integrity !== integrity) {
+              throw new Error('This version already exists with different bytes. Review it and prepare a new alpha version.');
+            }
+            shouldStage = false;
+          } else {
+            throw new Error(`Registry inspection failed with HTTP ${response.status}; refusing to stage.`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${tarball}\nshould_stage=${shouldStage}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `### Diffglow ${version}\n\nAudited tarball SHA-256: \`${sha256}\`\n\n` +
+            (shouldStage ? 'The exact audited tarball will be staged under **alpha**. A maintainer must inspect and approve it with npm 2FA.\n' :
+              'The registry already contains this exact tarball. Staging was skipped; complete the post-publication verification in the release guide.\n'));
+          NODE
+      # The npm trust relationship must allow stage publish only, for repository
+      # M1chaelChen/diffglow, workflow release.yml, environment npm-staging.
+      # npm stage list/view/download/approve require a maintainer session, not OIDC.
+      - name: Stage the exact tarball using OIDC
+        if: steps.artifact.outputs.should_stage == 'true'
+        env:
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+        run: |
+          if ! npm stage publish "$TARBALL" --tag alpha --access public --provenance --ignore-scripts --registry https://registry.npmjs.org; then
+            echo '::error::Staging failed. If this version is already pending, inspect it with npm stage list/view/download in a maintainer session. Approve matching bytes with 2FA or reject the pending stage before retrying. This workflow never approves, replaces, or tags a release.'
+            exit 1
+          fi
+      - name: Record the manual approval boundary
+        if: steps.artifact.outputs.should_stage == 'true'
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+
+          Staging succeeded. Use the stage ID in the preceding npm output to inspect and download the pending package, compare its checksum with this review bundle, and approve it with 2FA. Then verify a clean registry install before creating a GitHub prerelease. No Git tag or GitHub release was created by this workflow.
+          SUMMARY
