@@ -132,11 +132,12 @@ jobs:
           DIFFGLOW_TARBALL: ${{ runner.temp }}/diffglow-candidate/diffglow-${{ needs.validate.outputs.version }}.tgz
         run: npm run release:prepare
       - name: Retain this platform's release review bundle
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-review-${{ runner.os }}-node${{ matrix.node }}
           path: artifacts/release/${{ needs.validate.outputs.version }}/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
   stage:

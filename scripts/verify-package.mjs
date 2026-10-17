@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, copyFile, link, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, link, mkdir, mkdtemp, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,8 @@ const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf
 const releaseDir = path.join(root, 'artifacts', 'release', manifest.version);
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, 'Run this check through npm run verify:package.');
-await mkdir(releaseDir, { recursive: true });
+const consumerMode = process.argv[2] === '--consumer-check';
+if (!consumerMode) await mkdir(releaseDir, { recursive: true });
 const checks = [];
 const report = {
   package: `${manifest.name}@${manifest.version}`,
@@ -30,9 +31,9 @@ cleanEnv[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${cleanEn
 // Keep verification self-contained and avoid modifying a developer's global npm cache.
 cleanEnv.npm_config_cache = path.join(root, 'artifacts', '.npm-cache');
 
-function command(executable, args, cwd, expected = 0) {
+function command(executable, args, cwd, expected = 0, timeout = 180_000) {
   const result = spawnSync(executable, args, {
-    cwd, env: cleanEnv, encoding: 'utf8', timeout: 180_000, maxBuffer: 8 * 1024 * 1024,
+    cwd, env: cleanEnv, encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024,
     windowsHide: true,
     windowsVerbatimArguments: process.platform === 'win32' && /(?:^|[\\/])cmd\.exe$/i.test(executable)
   });
@@ -92,6 +93,7 @@ function inspectText(filename, content) {
 }
 
 try {
+  if (!consumerMode) {
   let metadata;
   if (process.env.DIFFGLOW_TARBALL) {
     const supplied = path.resolve(process.env.DIFFGLOW_TARBALL);
@@ -163,6 +165,19 @@ try {
       await assert.rejects(access(path.join(consumer, 'node_modules', name)), { code: 'ENOENT' });
     }
   });
+  // Native modules retain DLL handles on Windows until their process exits.
+  // Keep all consumer Sharp work in a child so cleanup never removes a loaded DLL.
+  const resultFile = path.join(consumer, 'consumer-checks.json');
+  const child = command(process.execPath, [fileURLToPath(import.meta.url), '--consumer-check', consumer, resultFile], root, 0, 120_000);
+  const childReport = JSON.parse(await readFile(resultFile, 'utf8'));
+  assert.equal(childReport.status, 'passed', 'Installed-package child verification did not pass.');
+  checks.push(...childReport.checks);
+  process.stdout.write(child.stdout);
+  process.stderr.write(child.stderr);
+  report.status = 'passed';
+  } else {
+  assert.equal(process.argv.length, 5, 'Consumer check mode requires a directory and result file.');
+  consumer = await realpath(process.argv[3]);
   const installed = path.join(consumer, 'node_modules', 'diffglow');
   const requireInstalled = createRequire(path.join(installed, 'package.json'));
   const sharpRelative = path.relative(consumer, await realpath(requireInstalled.resolve('sharp')));
@@ -278,13 +293,30 @@ try {
     console.log('Packed CLI: symlink check skipped because Windows file-symlink privilege is unavailable.');
   }
   report.status = 'passed';
+  }
 } catch (error) {
   report.status = 'failed';
   // Store a concise failure without environment variables, install logs, or temporary filesystem paths.
   report.error = error instanceof Error ? error.message.split('\n')[0] : String(error);
   throw error;
 } finally {
-  report.completedAt = new Date().toISOString();
-  await writeFile(path.join(releaseDir, 'package-report.json'), JSON.stringify(report, null, 2) + '\n');
-  if (consumer) await rm(consumer, { recursive: true, force: true, maxRetries: 3 });
+  if (consumerMode) {
+    await writeFile(process.argv[4], JSON.stringify({ status: report.status, checks, ...(report.error ? { error: report.error } : {}) }) + '\n');
+  } else {
+    if (consumer) {
+      try {
+        command(process.execPath, ['--input-type=module', '-e',
+          "import { rm } from 'node:fs/promises'; await rm(process.argv[1], { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });",
+          consumer], root, 0, 15_000);
+        report.cleanup = { status: 'passed' };
+      } catch (error) {
+        report.status = 'failed';
+        report.cleanup = { status: 'failed', error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+        process.exitCode = 1;
+        console.error('Clean consumer removal failed or exceeded its 15-second limit.');
+      }
+    }
+    report.completedAt = new Date().toISOString();
+    await writeFile(path.join(releaseDir, 'package-report.json'), JSON.stringify(report, null, 2) + '\n');
+  }
 }
