@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha.3
+
+- Publish reviewed alpha releases from GitHub Actions using npm Trusted Publishing
+  and provenance, after approval in the main-only `npm-publish` environment.
+- Verify a fresh registry installation before creating the GitHub prerelease.
+- Check candidate integrity, immutable versions, release tags, and asset digests
+  so interrupted releases can resume without overwriting published contents.
+- Add offline release-safety tests and document the approval and recovery flow.
+
 ## 0.1.0-alpha.2
 
 - Compare recursive folder sets using `baseline/` and `current/` defaults, explicit

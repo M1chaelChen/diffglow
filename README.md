@@ -320,7 +320,7 @@ the comparison:
 
 ```yaml
 - name: Compare screenshots
-  run: npx --yes diffglow@0.1.0-alpha.2 before.png after.png --output artifacts/diff.png --fail-on-diff
+  run: npx --yes diffglow@0.1.0-alpha.3 before.png after.png --output artifacts/diff.png --fail-on-diff
 
 - name: Upload highlighted comparison
   if: always()
