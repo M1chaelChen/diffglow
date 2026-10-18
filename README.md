@@ -34,6 +34,35 @@ always PNG; missing parent directories are created. An existing result can be
 replaced, but neither input can be overwritten, including through a symbolic link
 or hard link.
 
+## Integrate with an AI coding agent
+
+The optional [Diffglow skill](./skills/diffglow/SKILL.md) helps your coding agent
+integrate visual comparison with existing Playwright, Maestro, or other E2E tests:
+**intent → existing E2E captures → evidence → agent feedback → rerun**.
+
+Install Diffglow in your project, then install its bundled skill with the
+[Skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+npm install --save-dev --save-exact diffglow@alpha
+npx skills add ./node_modules/diffglow/skills/diffglow --skill diffglow
+```
+
+Choose your coding agent when prompted. Ask it to "Use the diffglow skill to add
+visual verification to my existing E2E tests" or to verify a specific UI change.
+The skill includes Playwright and Maestro integration guidance, comparison
+commands, and a format for reporting verified effects, defects, and uncertainty.
+
+Your E2E tools still capture screenshots. The skill uses your agent's existing
+image-reading capabilities; Diffglow requires no additional AI service or API key.
+Pixel statistics, runner assertions, and the agent's visual assessments remain
+distinct. Routine changes do not require manual snapshot approvals.
+
+The skill guides the agent; it does not add an AI verification engine, automatic
+baseline updates, or a semantic CI gate to the CLI. A completed comparison is not
+proof that a UI change is correct. Existing test failures and incomplete coverage
+remain visible in the verification report.
+
 ## Options
 
 | Option | Behavior |
@@ -320,7 +349,7 @@ the comparison:
 
 ```yaml
 - name: Compare screenshots
-  run: npx --yes diffglow@0.1.0-alpha.3 before.png after.png --output artifacts/diff.png --fail-on-diff
+  run: npx --yes diffglow@0.1.0-alpha.4 before.png after.png --output artifacts/diff.png --fail-on-diff
 
 - name: Upload highlighted comparison
   if: always()

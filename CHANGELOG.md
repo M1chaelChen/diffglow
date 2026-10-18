@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.4
+
+- Bundle an optional agent skill for adding Diffglow to existing E2E workflows,
+  with Playwright and Maestro guidance and an intent/evidence/fix/rerun loop.
+- Distinguish raw screenshot changes, runner assertions, and agent assessments
+  in verification plans and reports without adding manual snapshot approvals.
+
 ## 0.1.0-alpha.3
 
 - Publish reviewed alpha releases from GitHub Actions using npm Trusted Publishing

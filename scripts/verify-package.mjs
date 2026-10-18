@@ -77,7 +77,7 @@ function archiveFiles(tgz) {
 }
 
 function inspectText(filename, content) {
-  if (!/\.(?:js|json|md|txt|map)$/.test(filename) && !/^(?:LICENSE|NOTICE)$/.test(filename)) return;
+  if (!/\.(?:js|json|md|txt|map|ya?ml)$/.test(filename) && !/^(?:LICENSE|NOTICE)$/.test(filename)) return;
   const text = content.toString('utf8');
   const patterns = [
     /\/(?:Users|home)\/[^/\s]+\//,
@@ -126,19 +126,22 @@ try {
   await writeFile(path.join(releaseDir, 'package-files.json'), JSON.stringify(inventory, null, 2) + '\n');
   await check('tarball allowlist, licensing, metadata, and executable', async () => {
     if (metadata.files) assert.deepEqual(inventory.map(file => file.path).sort(), metadata.files.map(file => file.path).sort());
-    const allowed = /^(?:package\.json|README\.md|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md|dist\/[A-Za-z0-9_.-]+\.js|licenses\/[A-Za-z0-9_./-]+|docs\/demo\.png)$/;
+    const allowed = /^(?:package\.json|README\.md|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md|dist\/[A-Za-z0-9_.-]+\.js|licenses\/[A-Za-z0-9_./-]+|docs\/demo\.png|skills\/diffglow\/(?:SKILL\.md|agents\/openai\.yaml|references\/(?:playwright|maestro|verification)\.md))$/;
     for (const [filename, content] of files) {
       assert.match(filename, allowed, `Unintended packed file: ${filename}`);
       inspectText(filename, content);
     }
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png']) {
+    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
       assert.ok(files.has(required), `Missing packed release file: ${required}`);
     }
-    for (const match of files.get('README.md').toString().matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
-      const target = match[1];
-      if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(target)) continue;
-      assert.ok(files.has(decodeURIComponent(target.split('#')[0].replace(/^\.\//, ''))),
-        `README links to a file excluded from npm: ${target}`);
+    for (const [filename, content] of files) {
+      if (filename !== 'README.md' && !/^skills\/diffglow\/.*\.md$/.test(filename)) continue;
+      for (const match of content.toString().matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+        const target = match[1];
+        if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(target)) continue;
+        const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(filename), decodeURIComponent(target.split('#')[0])));
+        assert.ok(files.has(resolved), `${filename} links to a file excluded from npm: ${target}`);
+      }
     }
     assert.ok([...files.keys()].some(file => file.startsWith('licenses/')), 'Dependency license texts must be included.');
     const pkg = JSON.parse(files.get('package.json').toString());

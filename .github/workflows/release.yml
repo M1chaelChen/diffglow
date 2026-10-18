@@ -10,7 +10,7 @@ on:
       expected_version:
         description: Reviewed alpha version from package.json
         required: true
-        default: 0.1.0-alpha.3
+        default: 0.1.0-alpha.4
         type: string
       publish_to_npm:
         description: Publish after GitHub environment approval, then verify npm and create the prerelease; false only checks

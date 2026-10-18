@@ -1,6 +1,6 @@
 {
   "name": "diffglow",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "type": "module",
   "description": "Compare screenshots and highlight changes over the current image.",
   "license": "Apache-2.0",
@@ -14,7 +14,7 @@
   "keywords": ["visual-regression", "screenshot", "image-diff", "cli", "testing"],
   "bin": { "diffglow": "dist/cli.js" },
   "exports": {},
-  "files": ["dist/*.js", "README.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "licenses/", "docs/demo.png"],
+  "files": ["dist/*.js", "README.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "licenses/", "docs/demo.png", "skills/diffglow/"],
   "publishConfig": { "access": "public", "tag": "alpha", "registry": "https://registry.npmjs.org/" },
   "engines": {
     "node": ">=22"

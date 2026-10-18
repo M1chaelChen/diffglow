@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diffglow"
+  short_description: "Integrate and verify visual changes with existing E2E"
+  default_prompt: "Use $diffglow to integrate visual comparison with my existing E2E tools and verify the intended UI change with evidence and reruns."
