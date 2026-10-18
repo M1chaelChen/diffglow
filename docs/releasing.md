@@ -1,172 +1,175 @@
 # Releasing Diffglow
 
-The initial target is `diffglow@0.1.0-alpha.1`, npm tag `alpha`, and GitHub
-prerelease `v0.1.0-alpha.1` in `M1chaelChen/diffglow`. Keep stable releases and
-`latest` promotion outside this alpha procedure.
+Diffglow uses explicit `x.y.z-alpha.n` versions and the npm `alpha` tag. Releases
+start with a manual GitHub Actions dispatch from a reviewed `main` commit. Ordinary
+pushes and pull requests run checks without publishing. This procedure does not
+promote a release to `latest`.
 
-## Prepare locally
+Configuring the workflow and trusted publisher does not require a version bump or
+publish a package. The setup is fully proven only after a future release completes
+an actual OIDC publication, registry installation, and GitHub prerelease.
 
-Preparation does not create a public repository, push source, reserve a package
-name, stage a package, or publish anything. Those are launch actions requiring the
-maintainer's explicit launch instruction.
+## One-time setup
+
+Create the GitHub environment **`npm-publish`** in
+[the repository settings](https://github.com/M1chaelChen/diffglow/settings/environments):
+
+- Add **`M1chaelChen`** as a required reviewer.
+- Allow deployments from the selected branch **`main`** only.
+- With a single maintainer, leave **Prevent self-review** disabled so the person
+  dispatching the workflow can approve the release.
+
+Do not add an `NPM_TOKEN` secret. The publishing job receives a short-lived OIDC
+identity after the environment approval. No npm authentication token is stored in
+GitHub Actions.
+
+In npm's Diffglow package settings, configure this trusted publisher:
+
+| Setting | Value |
+| --- | --- |
+| Publisher | GitHub Actions |
+| Label | `Diffglow GitHub Actions` (optional) |
+| Organization or user | `M1chaelChen` |
+| Repository | `diffglow` |
+| Workflow filename | `release.yml` |
+| Environment name | `npm-publish` |
+| Allow `npm publish` | Checked |
+| Allow `npm dist-tag` | Unchecked |
+
+Use the filename only, without `.github/workflows/`. The environment name must
+match the publishing job exactly. npm fixes the provider and required fields when
+the connection is created; correcting those fields requires deleting and creating
+the connection again. Direct publishing sets the `alpha` tag as part of publication
+and does not require a separate `npm dist-tag` permission.
+
+Complete the first actual trusted publication within two days of creating the
+connection; unused new connections expire. A preparation-only workflow run does
+not exercise npm trust or prevent that expiry. If no new release is ready, recreate
+the connection when publication is ready instead of publishing a throwaway version.
+See [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/).
+
+## Prepare and review locally
 
 ```bash
 npm ci
 npm run release:prepare
 ```
 
-Inspect `artifacts/release/0.1.0-alpha.1/` (substitute the release version for later
-alphas). It contains:
+This command writes `artifacts/release/<version>/` without pushing source, creating
+a tag, staging a package, or publishing. The review bundle contains the tarball,
+`SHA256SUMS`, file inventory, package/public-source audit reports, validation log,
+release notes, dependency licenses, and original demonstration screenshots.
 
-- `diffglow-0.1.0-alpha.1.tgz` and `SHA256SUMS`.
-- `package-report.json`, `public-audit.json`, `dependency-licenses.json`,
-  `release-manifest.json`, and `validation.log`.
-- `RELEASE_NOTES.md`, `ANNOUNCEMENT.md`, and `screenshots/` with the original
-  before/after/highlighted images and demo.
+Inspect the actual tarball and public Git tree. Keep research, credentials,
+development tooling, private screenshots, machine-specific paths, and temporary
+artifacts out of public contents. Confirm the README, metadata, executable,
+third-party notices, and demonstration images. Package comparison logic remains
+internal; the supported interface is the CLI.
 
-The manifest records which environment was actually verified. Local preparation
-does not assert that the hosted matrix has passed. Review the actual tarball,
-rather than relying on source files alone. It must contain compiled CLI code,
-metadata, README, license/notices,
-and the selected demo image, without research, credentials, source maps containing
-private paths, development tooling, or extra captures.
+A local run proves only its own platform and Node.js version. Publication requires
+the hosted Linux/macOS/Windows × Node.js 22/24 matrix against the same canonical
+candidate.
 
-Review the public Git tree as well. Preserve local research while ensuring it and
-its raw evidence never enter public history. Confirm README links, dependency
-licenses, CLI help/version, and version metadata. Record the reviewed commit and
-tarball checksum. Package comparison logic stays internal; the supported interface
-is the CLI.
+## Run a release
 
-A local run only validates that operating system and Node.js version. The release
-is not ready for npm approval until the six hosted Linux/macOS/Windows × Node.js
-22/24 package-verification jobs pass against the intended commit. The first hosted
-checks may run after the authorized public repository creation, before npm staging.
+1. Prepare and review a version/changelog change. Update `package.json` and its
+   lockfile together, retaining the `x.y.z-alpha.n` format. Push the reviewed commit
+   to `main` and record its full 40-character SHA.
+2. Open [Actions → release workflow](https://github.com/M1chaelChen/diffglow/actions/workflows/release.yml)
+   and select **Run workflow** on **main**. Supply:
 
-## First public alpha: one-time bootstrap
+   | Input | Value |
+   | --- | --- |
+   | `expected_sha` | The full reviewed `main` commit SHA |
+   | `expected_version` | The exact version in that commit's `package.json` |
+   | `publish_to_npm` | `true` for publication; the default `false` only prepares and verifies |
 
-Use Node.js 24 and npm 12.2.0 for the release procedure. Authenticate interactively
-with the intended npm maintainer account and enable 2FA. Do not put authentication
-tokens or one-time codes into scripts, command arguments, issues, or logs.
+3. The workflow validates the repository, selected branch, SHA, and package
+   version. It builds and audits one canonical tarball, then installs and checks
+   those exact bytes across all six platform/Node combinations. It retains the
+   candidate and platform evidence as workflow artifacts.
+4. With `publish_to_npm: true`, the publishing job waits at the **`npm-publish`**
+   environment. Review the candidate, checksum, platform results, and source
+   commit, then approve **Review deployments** in the workflow run.
+5. After approval, npm verifies the workflow's OIDC identity. The job publishes the
+   downloaded, checksum-verified tarball directly with `--tag alpha`, public access,
+   provenance, and lifecycle scripts disabled. It does not rebuild the package or
+   ask for an npm password, token, or interactive 2FA approval.
+6. A separate verification job checks the registry's exact version and integrity,
+   confirms the `alpha` tag, and installs the release into a fresh consumer/cache.
+   It checks the installed CLI and actual comparisons, including output generation
+   and exit codes. This job has no publishing permission.
+7. Only after registry verification succeeds, a separate job creates
+   **`v<version>`** at the reviewed commit and publishes a GitHub **prerelease** with
+   the release notes and release assets. That job receives `contents: write`;
+   it does not receive npm's OIDC publishing permission.
 
-1. Obtain the explicit launch instruction. Recheck that the npm package and
-   GitHub repository names are available or owned by the intended maintainer;
-   previous availability checks do not reserve either name.
-2. Create the public `M1chaelChen/diffglow` repository from the reviewed source and
-   push the reviewed `main` commit. Enable private vulnerability reporting.
-   Manually dispatch `release.yml` on `main` with `expected_sha` set to the full
-   reviewed commit SHA, `expected_version` set to `0.1.0-alpha.1`, and
-   `stage_with_oidc` set to **false**. This prepares one canonical tarball and
-   verifies those exact bytes on all six platform/Node combinations without
-   staging anything. Resolve every failure before proceeding.
-3. Download the workflow's `release-candidate` artifact after all six checks pass.
-   Inspect its tarball, checksum, reports, and source commit; use this exact
-   candidate for publication, rather than repacking locally. Verify `npm whoami`
-   reports the intended account. From the downloaded candidate's directory, stage
-   its tarball with interactive authentication:
+Use `publish_to_npm: false` to validate the configured workflow without registry
+writes or a GitHub prerelease. This tests preparation and the platform matrix;
+it does not prove OIDC authentication. A later dispatch with publishing enabled
+prepares a new candidate, which must pass its own checks and environment review.
 
-   ```bash
-   npm stage publish ./diffglow-0.1.0-alpha.1.tgz --tag alpha --access public
-   ```
+## Verify the result
 
-   Staging a previously nonexistent package creates a **public `0.0.0-stage`
-   placeholder**. Staging is therefore a public launch action even before the
-   alpha tarball is approved. A new package must exist before Trusted Publishing
-   can be configured. [npm staged publishing](https://docs.npmjs.com/staged-publishing/)
-4. Save the returned stage ID. Inspect it and download the staged tarball into a
-   separate empty directory:
+The workflow records the published version, source commit, checksum, registry
+checks, and GitHub prerelease in its run summary. Check that npm's provenance links
+back to the intended repository and workflow run.
 
-   ```bash
-   npm stage view <stage-id>
-   npm stage download <stage-id>
-   ```
-
-   Compare the downloaded bytes with the reviewed SHA-256 checksum. Inspect package
-   name, version, `alpha` tag, access, and file inventory. Reject the stage if any
-   check differs; do not approve a replacement without repeating verification.
-5. Approve the stage interactively, completing the 2FA prompt:
-
-   ```bash
-   npm stage approve <stage-id>
-   ```
-
-The local bootstrap does not claim CI provenance. Subsequent CI stages use OIDC and
-provenance after the package's trusted publisher is configured.
-
-## Subsequent alphas through GitHub Actions
-
-Use a reviewed version/changelog pull request for each release. Preserve the
-`x.y.z-alpha.n` version form and npm `alpha` tag. No publishing runs on ordinary
-pushes or pull requests.
-
-Configure an npm Trusted Publisher for the package with these exact values:
-
-| Setting | Value |
-| --- | --- |
-| Provider | GitHub Actions |
-| Owner | `M1chaelChen` |
-| Repository | `diffglow` |
-| Workflow filename | `release.yml` |
-| GitHub environment | `npm-staging` |
-| Permission | Staging only; no direct publishing permission |
-
-Protect the GitHub `npm-staging` environment with maintainer approval and restrict
-it to `main`. Do not add an `NPM_TOKEN` secret. The workflow requests a short-lived
-OIDC token and stages with provenance. Complete the first trusted stage promptly:
-new trusted-publisher configurations expire if unused for two days.
-[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
-
-Manually dispatch `.github/workflows/release.yml` on `main` with:
-
-- `expected_sha`: the full 40-character reviewed `main` commit SHA.
-- `expected_version`: the exact version in that commit, such as `0.1.0-alpha.2`.
-- `stage_with_oidc`: **true** to stage after verification, once trust is configured.
-  Its default is **false**, which only prepares and verifies the candidate.
-
-The workflow only stages from the canonical public repository. It prepares one
-candidate tarball on Ubuntu/Node.js 24, then downloads and verifies those exact
-bytes in all six platform/Node combinations. After those checks pass, a dispatch
-with `stage_with_oidc: true` stages the original candidate using npm 12.2.0, its
-recorded checksum, and the `alpha` tag. A false value leaves the candidate available
-for review and manual bootstrap staging without making a registry write.
-Inspect and approve the returned stage interactively as above. OIDC does not grant
-permission to list,
-view, or download staged packages; a maintainer uses their own interactive npm
-authentication for those review actions. The workflow never approves stages or
-creates release tags automatically.
-
-## Verify publication and announce
-
-Use an empty directory outside the source checkout with fresh package installation
-and original example images:
+For an additional manual check, use an empty directory outside the checkout and
+substitute the newly published version:
 
 ```bash
-npm view diffglow@0.1.0-alpha.1 version dist-tags dist.integrity
-npx --yes diffglow@0.1.0-alpha.1 --version
-npx --yes diffglow@0.1.0-alpha.1 before.png after.png --output highlighted.png
+npm view diffglow@0.1.0-alpha.3 version dist.integrity dist-tags
+npx --yes diffglow@0.1.0-alpha.3 --version
+npx --yes diffglow@0.1.0-alpha.3 before.png after.png --output highlighted.png
 ```
 
-Confirm `alpha` resolves to the intended version and inspect the generated image.
-Also verify `--help`, the unchanged-image case, error exit `2`, and changed-image
-exit `1` with `--fail-on-diff` after writing its output. For later releases,
-substitute that release's exact version throughout this verification.
+Confirm `alpha` resolves to that version, the image is correct, unchanged inputs
+report zero changes, invalid input returns `2`, and `--fail-on-diff` returns `1`
+after generating output when changes exist. Review announcement copy separately
+before posting it; the release workflow does not publish announcements.
 
-Create the Git tag at the reviewed commit and a GitHub **prerelease** only after
-the registry verification succeeds. Attach the release notes, tarball checksum,
-and original example results. Recheck repository/npm links, then publish the
-approved copy from [launch-announcement.md](launch-announcement.md).
+## Recovery and retries
 
-## Recovery
+- Before publication, failed checks have no registry side effect. Fix the problem
+  in a newly reviewed commit and run its checks.
+- After an interruption, choose **Re-run failed jobs** in the **same workflow
+  run**. This reuses the original canonical candidate and completed platform
+  checks. Do not start a new dispatch or rerun successful preparation jobs merely
+  to recover a later step. Artifacts are retained for 14 days; if unavailable,
+  stop and review a newly prepared candidate.
+- The publishing job checks for the exact version first. An existing package with
+  the same integrity skips publication and resumes verification. Different bytes
+  for the same version fail; use a new alpha version after investigation.
+- A network failure can happen after npm accepts a package. Inspect the registry
+  before retrying. The workflow rechecks the exact version and integrity rather
+  than assuming a failed command means nothing was published.
+- An existing Git tag must resolve to the reviewed commit. Existing release assets
+  must match the reviewed bytes. Conflicting tags or assets fail instead of being
+  overwritten. A matching release can be completed on a retry.
+- If a newer alpha already owns the `alpha` tag, investigate rather than silently
+  moving it backward. For a defective published alpha, publish a corrected
+  prerelease and deprecate the defective version with an upgrade message.
 
-- A failed validation has no publishing side effect; fix it and rerun against the
-  new reviewed commit and checksum.
-- If staging succeeded but the workflow was interrupted, inspect the pending stage
-  interactively. A duplicate-version retry may fail safely; it must not autoapprove
-  an earlier stage or silently replace its bytes.
-- Reject an incorrect stage with `npm stage reject <stage-id>`, then prepare and
-  review the corrected release. Resolve any stale pending stage before retrying.
-- If approval succeeded but tagging or announcement failed, verify the existing
-  package integrity and finish those steps. Do not republish the same version.
-- For a defective published alpha, publish a corrected prerelease and deprecate
-  the defective version with a useful upgrade message. If necessary, a maintainer
-  can restore `alpha` to the previous verified version with interactive 2FA. Do not
-  overwrite versions or use unpublishing as routine recovery.
+If OIDC configuration cannot be repaired in time, manual staged publishing is a
+maintainer recovery option. Use Node.js 24 and npm 12.2.0, authenticate interactively
+with 2FA, and use the exact reviewed candidate rather than repacking:
+
+```bash
+npm stage publish ./diffglow-<version>.tgz --tag alpha --access public
+npm stage view <stage-id>
+npm stage download <stage-id>
+```
+
+Compare the downloaded bytes with the reviewed checksum, then approve with
+`npm stage approve <stage-id>` and complete 2FA. Reject an incorrect stage with
+`npm stage reject <stage-id>`. Pending stages are not approved by OIDC or by the
+release workflow. After manual approval, rerun the failed jobs in the original
+workflow: matching registry integrity allows verification and GitHub release
+creation to finish. Manual publication does not claim GitHub Actions provenance.
+See [npm staged publishing](https://docs.npmjs.com/staged-publishing/).
+
+Never overwrite a published version or use unpublishing as routine recovery. A
+maintainer can explicitly restore `alpha` to a previously verified release with
+interactive authentication when recovery requires it; the trusted publisher does
+not receive permission to manage dist-tags independently.

@@ -32,7 +32,10 @@
     "verify:package": "node scripts/verify-package.mjs",
     "audit:public": "node scripts/audit-public.mjs",
     "verify": "npm run typecheck && npm test && npm run build && npm run examples:verify && npm run licenses:check && npm run verify:package && npm run audit:public",
-    "release:prepare": "node scripts/prepare-release.mjs"
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:publish": "node scripts/publish-release.mjs",
+    "release:verify-registry": "node scripts/verify-registry.mjs",
+    "release:github": "node scripts/github-release.mjs"
   },
   "dependencies": {
     "pixelmatch": "8.0.0",

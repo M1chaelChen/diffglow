@@ -70,5 +70,8 @@ file and third-party license inventory.
 Run `npm run release:prepare` to prepare a local review bundle. Publication is a
 separate maintainer action. For a hosted release candidate, the manually dispatched
 `release.yml` workflow defaults to preparation and verification only
-(`stage_with_oidc: false`). It tests the same canonical tarball across all six
-platform/Node combinations. See [the release procedure](docs/releasing.md).
+(`publish_to_npm: false`). It tests the same canonical tarball across all six
+platform/Node combinations. Publishing requires `publish_to_npm: true` and approval
+of the protected `npm-publish` environment. OIDC publication is followed by a fresh
+registry installation and a GitHub prerelease; no stored npm token is needed.
+See [the release procedure](docs/releasing.md) for setup, approval, and retry steps.
