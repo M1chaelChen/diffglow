@@ -83,7 +83,9 @@ test('JSON identical case exits 0 with null bounds and an unchanged default outp
     comparedPixels: 48, changedPixels: 0, unchangedPixels: 48, changedPercentage: 0,
     modifiedPixels: 0, addedPixels: 0, removedPixels: 0, diffBounds: null
   });
-  assert.equal(json.output.path, path.join(await realpath(dir), 'diff.png'));
+  assert.equal(path.isAbsolute(json.output.path), true);
+  // Windows may expose the child process cwd through its equivalent 8.3 alias.
+  assert.equal(await realpath(json.output.path), await realpath(path.join(dir, 'diff.png')));
   assert.deepEqual(await readPixels(json.output.path), await readPixels(after));
 });
 
