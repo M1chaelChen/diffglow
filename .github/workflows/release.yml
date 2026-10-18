@@ -10,7 +10,7 @@ on:
       expected_version:
         description: Reviewed alpha version from package.json
         required: true
-        default: 0.1.0-alpha.1
+        default: 0.1.0-alpha.2
         type: string
       stage_with_oidc:
         description: Stage after verification using configured npm trust; leave false to prepare a review bundle only

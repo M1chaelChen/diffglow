@@ -11,6 +11,7 @@ const HIGHLIGHT_OPACITY = 0.65;
 export interface DiffOptions {
   output?: string;
   threshold?: number;
+  previews?: { baseline: string; current: string };
 }
 
 export interface Dimensions {
@@ -18,14 +19,34 @@ export interface Dimensions {
   height: number;
 }
 
-export interface DiffResult extends Dimensions {
-  before: Dimensions;
-  after: Dimensions;
+export interface DiffBounds extends Dimensions {
+  x: number;
+  y: number;
+}
+
+export interface PairResult extends Dimensions {
+  beforePath: string | null;
+  afterPath: string | null;
+  before: Dimensions | null;
+  after: Dimensions | null;
   dimensionsChanged: boolean;
+  threshold: number;
   changedPixels: number;
+  unchangedPixels: number;
+  modifiedPixels: number;
+  addedPixels: number;
+  removedPixels: number;
   comparedPixels: number;
   changedPercentage: number;
+  diffBounds: DiffBounds | null;
   outputPath: string;
+}
+
+export interface DiffResult extends PairResult {
+  beforePath: string;
+  afterPath: string;
+  before: Dimensions;
+  after: Dimensions;
 }
 
 interface Image extends Dimensions {
@@ -50,7 +71,7 @@ async function inputFile(filename: string): Promise<string> {
 }
 
 // Resolve aliases and hard links before writing, rather than comparing only strings.
-async function assertSafeOutput(output: string, inputs: string[]): Promise<void> {
+export async function assertSafeOutput(output: string, inputs: string[]): Promise<void> {
   if (path.extname(output).toLowerCase() !== '.png') {
     throw new Error('Output must have a .png extension.');
   }
@@ -63,10 +84,11 @@ async function assertSafeOutput(output: string, inputs: string[]): Promise<void>
     if (!isMissing(error)) throw error;
   }
   for (const input of inputs) {
-    const inputStat = await stat(input);
+    let inputStat;
+    try { inputStat = await stat(input); } catch (error) { if (!isMissing(error)) throw error; }
     if (
       output === input || outputReal === input ||
-      (outputStat && outputStat.dev === inputStat.dev && outputStat.ino === inputStat.ino)
+      (outputStat && inputStat && outputStat.dev === inputStat.dev && outputStat.ino === inputStat.ino)
     ) {
       throw new Error('Output must not overwrite either input image.');
     }
@@ -132,32 +154,57 @@ export async function diffScreenshots(
   afterPath: string,
   options: DiffOptions = {}
 ): Promise<DiffResult> {
+  return comparePair(beforePath, afterPath, options) as Promise<DiffResult>;
+}
+
+/** Missing sides are explicit folder additions/removals, never failed reads. */
+export async function comparePair(
+  beforePath: string | null,
+  afterPath: string | null,
+  options: DiffOptions = {}
+): Promise<PairResult> {
   const threshold = options.threshold ?? 0.1;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
     throw new Error('Threshold must be a finite number between 0 and 1.');
   }
-  const [beforeFile, afterFile] = await Promise.all([inputFile(beforePath), inputFile(afterPath)]);
+  if (beforePath === null && afterPath === null) throw new Error('A comparison requires at least one image.');
+  const [beforeFile, afterFile] = await Promise.all([
+    beforePath === null ? null : inputFile(beforePath), afterPath === null ? null : inputFile(afterPath)
+  ]);
+  const inputs = [beforeFile, afterFile].filter((file): file is string => file !== null);
   const outputPath = path.resolve(options.output ?? 'diff.png');
-  await assertSafeOutput(outputPath, [beforeFile, afterFile]);
-  const [before, after] = await Promise.all([decode(beforeFile), decode(afterFile)]);
-  const width = Math.max(before.width, after.width);
-  const height = Math.max(before.height, after.height);
+  await assertSafeOutput(outputPath, inputs);
+  if (options.previews) {
+    for (const preview of Object.values(options.previews)) await assertSafeOutput(path.resolve(preview), inputs);
+    const destinations = [outputPath, ...Object.values(options.previews).map(file => path.resolve(file))];
+    if (new Set(destinations).size !== destinations.length) throw new Error('Preview and diff output paths must be distinct.');
+  }
+  const [before, after] = await Promise.all([beforeFile === null ? null : decode(beforeFile), afterFile === null ? null : decode(afterFile)]);
+  const width = Math.max(before?.width ?? 0, after?.width ?? 0);
+  const height = Math.max(before?.height ?? 0, after?.height ?? 0);
   if (width * height > MAX_PIXELS) {
     throw new Error(`Combined image exceeds the ${MAX_PIXELS.toLocaleString('en-US')}-pixel limit.`);
   }
-  const beforePixels = align(before, width, height);
-  const afterPixels = align(after, width, height);
+  const beforePixels = before ? align(before, width, height) : Buffer.alloc(width * height * 4);
+  const afterPixels = after ? align(after, width, height) : Buffer.alloc(width * height * 4);
   const mask = Buffer.alloc(width * height * 4);
-  pixelmatch(beforePixels, afterPixels, mask, width, height, {
+  if (before && after) pixelmatch(beforePixels, afterPixels, mask, width, height, {
     threshold, includeAA: false, diffMask: true, diffColor: [...HIGHLIGHT]
   });
   const highlighted = Buffer.from(afterPixels);
   let changedPixels = 0;
+  let modifiedPixels = 0;
+  let addedPixels = 0;
+  let removedPixels = 0;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const offset = (y * width + x) * 4;
-      const inBefore = x < before.width && y < before.height;
-      const inAfter = x < after.width && y < after.height;
+      const inBefore = before !== null && x < before.width && y < before.height;
+      const inAfter = after !== null && x < after.width && y < after.height;
       if (!inBefore && !inAfter) continue;
       // Size changes always count, including transparent added/removed areas.
       const changed = inBefore !== inAfter || mask[offset + 3] !== 0;
@@ -165,26 +212,50 @@ export async function diffScreenshots(
       if (inBefore && !inAfter) beforePixels.copy(highlighted, offset, offset, offset + 4);
       highlight(highlighted, offset);
       changedPixels++;
+      if (inBefore && inAfter) modifiedPixels++;
+      else if (inAfter) addedPixels++;
+      else removedPixels++;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
     }
   }
-  const comparedPixels = before.width * before.height + after.width * after.height -
-    Math.min(before.width, after.width) * Math.min(before.height, after.height);
+  const comparedPixels = (before ? before.width * before.height : 0) + (after ? after.width * after.height : 0) -
+    Math.min(before?.width ?? 0, after?.width ?? 0) * Math.min(before?.height ?? 0, after?.height ?? 0);
   // Check again immediately before replacing an existing destination.
-  await assertSafeOutput(outputPath, [beforeFile, afterFile]);
+  await assertSafeOutput(outputPath, inputs);
   try {
     await savePNG(highlighted, width, height, outputPath);
+    if (options.previews) {
+      for (const [image, filename] of [[before, options.previews.baseline], [after, options.previews.current]] as const) {
+        if (!image) continue;
+        await assertSafeOutput(path.resolve(filename), inputs);
+        await savePNG(image.data, image.width, image.height, filename);
+      }
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot write output "${outputPath}": ${detail}`);
   }
   return {
     width, height,
-    before: { width: before.width, height: before.height },
-    after: { width: after.width, height: after.height },
-    dimensionsChanged: before.width !== after.width || before.height !== after.height,
+    beforePath: beforeFile,
+    afterPath: afterFile,
+    before: before ? { width: before.width, height: before.height } : null,
+    after: after ? { width: after.width, height: after.height } : null,
+    dimensionsChanged: before?.width !== after?.width || before?.height !== after?.height,
+    threshold,
     changedPixels,
+    unchangedPixels: comparedPixels - changedPixels,
+    modifiedPixels,
+    addedPixels,
+    removedPixels,
     comparedPixels,
     changedPercentage: changedPixels / comparedPixels * 100,
+    diffBounds: changedPixels === 0 ? null : {
+      x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1
+    },
     outputPath
   };
 }

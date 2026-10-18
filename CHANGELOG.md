@@ -1,8 +1,24 @@
 # Changelog
 
+## 0.1.0-alpha.2
+
+- Compare recursive folder sets using `baseline/` and `current/` defaults, explicit
+  folder paths, or named JSON manifest pairs.
+- Configure folder names, include/exclude globs, and filename pairing templates.
+- Add opt-in offline HTML reports with screenshot assets, search, status filters,
+  detailed statistics, and full-resolution image links.
+- Report added/removed screenshots and continue after per-file errors, with
+  weighted aggregate statistics and deterministic batch JSON results.
+- Stage generated reports before replacing Diffglow-owned output directories.
+- Add `--json` for machine-readable comparison statistics alongside the generated
+  PNG, including changed/unchanged counts, overlapping modifications, added/removed
+  image areas, and change bounds.
+- Return structured errors in JSON mode while preserving existing exit codes and
+  plain-text output by default.
+
 ## 0.1.0-alpha.1
 
-Initial open-source CLI release, prepared for publication.
+Initial open-source CLI release.
 
 - Compare PNG and JPEG screenshots locally and highlight changes in magenta over
   the second image while preserving unchanged pixels.

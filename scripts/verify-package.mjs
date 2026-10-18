@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, copyFile, link, mkdir, mkdtemp, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, link, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -131,7 +131,7 @@ try {
       assert.match(filename, allowed, `Unintended packed file: ${filename}`);
       inspectText(filename, content);
     }
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/diff.js', 'docs/demo.png']) {
+    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png']) {
       assert.ok(files.has(required), `Missing packed release file: ${required}`);
     }
     for (const match of files.get('README.md').toString().matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
@@ -196,6 +196,14 @@ try {
     }
     return command(cli, args, inputDir, expected);
   }
+  function runJSON(args, expected = 0) {
+    const result = run([...args, '--json'], expected);
+    assert.equal(result.stderr, '', 'JSON mode must not write human-readable errors or progress to stderr.');
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.schemaVersion, 1);
+    assert.equal(payload.exitCode, expected);
+    return payload;
+  }
   const pixels = (width, height, color = [255, 255, 255, 255]) => {
     const data = Buffer.alloc(width * height * 4);
     for (let i = 0; i < data.length; i += 4) data.set(color, i);
@@ -230,6 +238,110 @@ try {
         x >= 3 && x < 5 && y >= 2 && y < 4 ? [166, 35, 236, 255] : [255, 255, 255, 255]);
     }
     assert.match(run([before, after, '--output', output]).stdout, /4 changed pixels/);
+  });
+  await check('installed JSON result reports exact changes, absolute paths, settings, and output before exit 1', async () => {
+    const relativeOutput = path.join('json results', 'highlighted image.png');
+    const output = path.join(inputDir, relativeOutput);
+    const payload = runJSON([path.basename(before), path.basename(after), '--output', relativeOutput,
+      '--threshold', '0.2', '--fail-on-diff'], 1);
+    assert.equal(payload.status, 'different');
+    assert.deepEqual(payload.before, { path: before, width: 8, height: 6 });
+    assert.deepEqual(payload.after, { path: after, width: 8, height: 6 });
+    assert.deepEqual(payload.output, { path: output, width: 8, height: 6 });
+    for (const image of [payload.before, payload.after, payload.output]) assert.ok(path.isAbsolute(image.path));
+    assert.deepEqual(payload.comparison, {
+      threshold: 0.2, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false
+    });
+    assert.equal(payload.stats.comparedPixels, 48);
+    assert.equal(payload.stats.changedPixels, 4);
+    assert.equal(payload.stats.unchangedPixels, 44);
+    assert.equal(payload.stats.modifiedPixels, 4);
+    assert.equal(payload.stats.addedPixels, 0);
+    assert.equal(payload.stats.removedPixels, 0);
+    assert.ok(Math.abs(payload.stats.changedPercentage - 4 / 48 * 100) < 1e-6);
+    assert.deepEqual(payload.stats.diffBounds, { x: 3, y: 2, width: 2, height: 2 });
+    assert.equal((await stat(output)).isFile(), true, 'JSON exit 1 must happen after writing the image.');
+    const metadata = await sharp(output).metadata();
+    assert.deepEqual([metadata.format, metadata.width, metadata.height], ['png', 8, 6]);
+  });
+  await check('installed JSON identical result has zero changes and null bounds', async () => {
+    const output = path.join(inputDir, 'json results', 'identical.png');
+    const payload = runJSON([before, before, '-o', output, '--fail-on-diff']);
+    assert.equal(payload.status, 'identical');
+    assert.deepEqual(payload.stats, {
+      comparedPixels: 48, changedPixels: 0, unchangedPixels: 48, changedPercentage: 0,
+      modifiedPixels: 0, addedPixels: 0, removedPixels: 0, diffBounds: null
+    });
+    assert.deepEqual(payload.comparison, {
+      threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false
+    });
+    assert.equal(payload.output.path, output);
+    assert.deepEqual(await readPixels(output), await readPixels(before));
+  });
+  await check('installed JSON argument errors return a structured stdout result and exit 2', async () => {
+    const payload = runJSON([before, after, '--threshold', 'invalid'], 2);
+    assert.equal(payload.status, 'error');
+    assert.equal(typeof payload.error?.message, 'string');
+    assert.match(payload.error.message, /threshold/i);
+    assert.doesNotMatch(payload.error.message, /\n\s+at /);
+    assert.deepEqual(Object.keys(payload).sort(), ['error', 'exitCode', 'schemaVersion', 'status']);
+  });
+  await check('installed folder batch produces portable HTML assets, weighted JSON, missing sides, and continued errors', async () => {
+    const root = path.join(inputDir, 'batch screenshots');
+    const baseline = path.join(root, 'baseline');
+    const current = path.join(root, 'current');
+    const output = path.join(inputDir, 'batch report');
+    await mkdir(baseline, { recursive: true }); await mkdir(current);
+    await copyFile(before, path.join(baseline, 'changed.png'));
+    await copyFile(after, path.join(current, 'changed.png'));
+    await copyFile(before, path.join(baseline, 'removed.png'));
+    await copyFile(before, path.join(current, 'added.png'));
+    await copyFile(before, path.join(baseline, 'broken.png'));
+    await writeFile(path.join(current, 'broken.png'), 'invalid image');
+    const payload = runJSON([root, '--output-dir', output, '--html', '--fail-on-diff'], 2);
+    assert.equal(payload.mode, 'batch'); assert.equal(payload.status, 'error');
+    assert.deepEqual(payload.results.map(item => [item.id, item.status]), [
+      ['added.png', 'added'], ['broken.png', 'error'], ['changed.png', 'different'], ['removed.png', 'removed']
+    ]);
+    assert.equal(payload.summary.comparedPixels, 144);
+    assert.equal(payload.summary.changedPixels, 100);
+    assert.equal(payload.summary.changedPercentage, 100 / 144 * 100);
+    const html = await readFile(path.join(output, 'index.html'), 'utf8');
+    assert.match(html, /Baseline vs current/); assert.match(html, /Comparison failed/);
+    assert.match(html, /id="search"/); assert.match(html, /id="status"/);
+    assert.doesNotMatch(html, /<(?:script|link|img)[^>]+(?:src|href)=["'](?:https?:|\/\/)/i);
+    for (const result of payload.results) {
+      if (result.status === 'error') continue;
+      for (const asset of Object.values(result.artifacts)) if (asset) {
+        assert.ok(!path.isAbsolute(asset)); await access(path.join(output, asset));
+      }
+    }
+    assert.deepEqual(JSON.parse(await readFile(path.join(output, 'results.json'), 'utf8')), payload);
+    await rm(path.join(current, 'broken.png'));
+    await rm(path.join(baseline, 'broken.png'));
+    const next = runJSON([baseline, current, '--output-dir', output, '--fail-on-diff'], 1);
+    assert.equal(next.summary.errors, 0);
+    await assert.rejects(access(path.join(output, 'index.html')), { code: 'ENOENT' });
+  });
+  await check('installed config templates and manifest resolve nested paths without development tooling', async () => {
+    const root = path.join(inputDir, 'named screenshots'); await mkdir(root);
+    await copyFile(before, path.join(root, 'home.baseline.png'));
+    await copyFile(after, path.join(root, 'home.current.png'));
+    await writeFile(path.join(root, 'diffglow.config.json'), JSON.stringify({
+      baselineDir: '.', currentDir: '.', baselinePattern: '{key}.baseline.{ext}', currentPattern: '{key}.current.{ext}'
+    }));
+    const payload = runJSON([root, '--html', '--output-dir', path.join(root, 'report'), '--fail-on-diff'], 1);
+    assert.equal(payload.results.length, 1); assert.equal(payload.results[0].id, 'home');
+    assert.equal(payload.summary.changedPixels, 4);
+    const manifest = path.join(root, 'pairs.json');
+    await writeFile(manifest, JSON.stringify({ pairs: [{ id: 'named comparison', before: 'home.baseline.png', after: 'home.current.png' }] }));
+    const explicit = runJSON(['--manifest', manifest, '--output-dir', path.join(inputDir, 'manifest report'), '--html']);
+    assert.equal(explicit.results[0].id, 'named comparison');
+    assert.equal(explicit.summary.changedPixels, 4);
+    const singleOutput = path.join(inputDir, 'single html.png');
+    const single = runJSON([before, after, '--html', '-o', singleOutput, '--output-dir', path.join(inputDir, 'single report')]);
+    assert.equal(single.stats.changedPixels, 4); assert.equal(single.mode, undefined);
+    assert.equal((await sharp(singleOutput).metadata()).format, 'png');
   });
   await check('added and removed areas at threshold 1', async () => {
     const small = await image('small.png', 2, 3);
