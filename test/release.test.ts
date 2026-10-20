@@ -189,15 +189,31 @@ test('exhausted registry retries never become an absent version or permission to
 });
 
 test('publication waits until both immutable bytes and the alpha channel are visible', async () => {
-  const answers = [null, published, { alpha: '0.1.0-alpha.2' }, published, { alpha: version }];
+  const answers = [null, { alpha: '0.1.0-alpha.2' }, published, { alpha: '0.1.0-alpha.2' }, published, { alpha: version }];
   const suffixes: string[] = []; const waits: number[] = [];
   const result = await waitForPublication(version, integrity, {
     get: async (suffix: string) => { suffixes.push(suffix); return answers.shift(); },
     wait: async (milliseconds: number) => { waits.push(milliseconds); }, attempts: 3
   });
   assert.deepEqual(result, published); assert.equal(answers.length, 0);
-  assert.deepEqual(suffixes, [`/${version}`, `/${version}`, '/dist-tags', `/${version}`, '/dist-tags']);
-  assert.deepEqual(waits, [2000, 2000]);
+  assert.deepEqual(suffixes, [`/${version}`, '/dist-tags', `/${version}`, '/dist-tags', `/${version}`, '/dist-tags']);
+  assert.deepEqual(waits, [2000, 4000]);
+});
+
+test('publication survives several minutes of npm processing and waits for the alpha tag to catch up', async () => {
+  let elapsed = 0;
+  const waits: number[] = [];
+  const result = await waitForPublication(version, integrity, {
+    now: () => elapsed,
+    get: async (suffix: string) => suffix === '/dist-tags'
+      ? { alpha: elapsed >= 255_000 ? version : '0.1.0-alpha.2' }
+      : elapsed >= 240_000 ? published : null,
+    wait: async (milliseconds: number) => { waits.push(milliseconds); elapsed += milliseconds; }
+  });
+  assert.deepEqual(result, published);
+  assert.ok(elapsed >= 255_000 && elapsed <= 300_000, `Unexpected processing wait: ${elapsed}ms`);
+  assert.deepEqual(waits.slice(0, 4), [2000, 4000, 8000, 15_000]);
+  assert.ok(waits.every(milliseconds => milliseconds > 0 && milliseconds <= 15_000));
 });
 
 test('publication fails immediately on different bytes or a newer alpha instead of moving tags', async () => {
@@ -209,6 +225,10 @@ test('publication fails immediately on different bytes or a newer alpha instead 
     get: async (suffix: string) => suffix === '/dist-tags' ? { alpha: '0.1.0-alpha.4' } : published,
     wait: async () => assert.fail('newer alpha must not retry')
   }), /newer alpha/);
+  await assert.rejects(waitForPublication(version, integrity, {
+    get: async (suffix: string) => suffix === '/dist-tags' ? { alpha: '0.1.0-alpha.4' } : null,
+    wait: async () => assert.fail('newer alpha must not retry even before version metadata is visible')
+  }), /newer alpha/);
 });
 
 test('publication times out with recovery guidance and propagates registry failures', async () => {
@@ -216,12 +236,42 @@ test('publication times out with recovery guidance and propagates registry failu
   await assert.rejects(waitForPublication(version, integrity, {
     get: async () => { reads++; return null; },
     wait: async () => { waits++; }, attempts: 3
-  }), /inspect npm before rerunning/);
-  assert.equal(reads, 3); assert.equal(waits, 2);
+  }), /processing.*Inspect the registry.*Re-run failed jobs in the same workflow run/);
+  assert.equal(reads, 6); assert.equal(waits, 2);
   const denied = new Error('npm registry returned HTTP 403');
   await assert.rejects(waitForPublication(version, integrity, {
     get: async () => { throw denied; }, wait: async () => assert.fail('read failures must not be hidden')
   }), error => error === denied);
+  await assert.rejects(waitForPublication(version, integrity, {
+    get: async (suffix: string) => { if (suffix === '/dist-tags') throw denied; return published; },
+    wait: async () => assert.fail('dist-tag authorization failures must not retry')
+  }), error => error === denied);
+});
+
+test('publication polling stops at the five-minute budget without real delays', async () => {
+  let elapsed = 0; let versionReads = 0;
+  const waits: number[] = [];
+  await assert.rejects(waitForPublication(version, integrity, {
+    now: () => elapsed,
+    get: async (suffix: string) => { if (suffix !== '/dist-tags') versionReads++; return null; },
+    wait: async (milliseconds: number) => { waits.push(milliseconds); elapsed += milliseconds; }
+  }), /processing.*same workflow run.*do not republish/);
+  assert.equal(elapsed, 300_000);
+  assert.equal(versionReads, waits.length + 1);
+  assert.ok(versionReads < 30);
+  assert.ok(waits.every(milliseconds => milliseconds > 0 && milliseconds <= 15_000));
+  assert.equal(waits.at(-1), 1000);
+});
+
+test('publication polling rejects unbounded or invalid limits before reading the registry', async () => {
+  for (const limits of [
+    { attempts: 0 }, { attempts: -1 }, { attempts: 1.5 }, { attempts: Infinity }, { attempts: NaN },
+    { timeoutMs: 0 }, { timeoutMs: -1 }, { timeoutMs: Infinity }, { timeoutMs: NaN }
+  ]) await assert.rejects(waitForPublication(version, integrity, {
+    ...limits,
+    get: async () => assert.fail('invalid polling limits must not contact the registry'),
+    wait: async () => assert.fail('invalid polling limits must not wait')
+  }), /positive (safe integer|finite number)/);
 });
 
 test('GitHub tag lookup resolves lightweight and annotated tags without changing either', async () => {

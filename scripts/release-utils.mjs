@@ -71,16 +71,24 @@ export function publishDecision(metadata, tags, version, integrity) {
   if (tags?.alpha) assert.ok(compareAlphas(version, tags.alpha) > 0, 'Refusing to publish an older alpha or move alpha backward.');
   return true;
 }
-export async function waitForPublication(version, integrity, { get = registryJSON, wait = sleep, attempts = 30 } = {}) {
+export async function waitForPublication(version, integrity, {
+  get = registryJSON, wait = sleep, attempts = 30, timeoutMs = 300_000, now = () => performance.now()
+} = {}) {
+  assert.ok(Number.isSafeInteger(attempts) && attempts > 0, 'Publication attempts must be a positive safe integer.');
+  assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0, 'Publication timeout must be a positive finite number.');
+  const started = now();
+  let delay = 2000;
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0 && now() - started > timeoutMs) break;
     const metadata = await get(`/${encodeURIComponent(version)}`);
-    if (metadata) {
-      assertPublished(metadata, version, integrity);
-      const tags = await get('/dist-tags');
-      if (tags?.alpha === version) return metadata;
-      if (tags?.alpha && compareAlphas(tags.alpha, version) > 0) throw new Error('A newer alpha is already current.');
-    }
-    if (attempt + 1 < attempts) await wait(2000);
+    if (metadata) assertPublished(metadata, version, integrity);
+    const tags = await get('/dist-tags');
+    if (tags?.alpha && compareAlphas(tags.alpha, version) > 0) throw new Error('A newer alpha is already current.');
+    if (metadata && tags?.alpha === version) return metadata;
+    const remaining = timeoutMs - (now() - started);
+    if (attempt + 1 === attempts || remaining <= 0) break;
+    await wait(Math.min(delay, remaining));
+    delay = Math.min(delay * 2, 15_000);
   }
-  throw new Error('Publication not visible with matching integrity and alpha tag; inspect npm before rerunning failed jobs.');
+  throw new Error('npm publication processing did not become visible with matching integrity and alpha tag within the verification budget. Inspect the registry before choosing Re-run failed jobs in the same workflow run; do not republish or create a new candidate.');
 }

@@ -98,7 +98,11 @@ candidate.
 6. A separate verification job checks the registry's exact version and integrity,
    confirms the `alpha` tag, and installs the release into a fresh consumer/cache.
    It checks the installed CLI and actual comparisons, including output generation
-   and exit codes. This job has no publishing permission.
+   and exit codes. npm can accept a publication before its version metadata and
+   tag become visible; verification polls for up to five minutes with delays
+   increasing from two seconds to a maximum of 15 seconds. Both the reviewed
+   integrity and the expected `alpha` tag must match. This job has no publishing
+   permission.
 7. Only after registry verification succeeds, a separate job creates
    **`v<version>`** at the reviewed commit and publishes a GitHub **prerelease** with
    the release notes and release assets. That job receives `contents: write`;
@@ -144,6 +148,13 @@ before posting it; the release workflow does not publish announcements.
 - A network failure can happen after npm accepts a package. Inspect the registry
   before retrying. The workflow rechecks the exact version and integrity rather
   than assuming a failed command means nothing was published.
+- A publication-processing timeout also does not mean the package was rejected.
+  Inspect the exact registry version, integrity, and `alpha` tag. Once the reviewed
+  bytes and tag are visible, choose **Re-run failed jobs** in the same workflow
+  run so verification can finish with the original candidate. Do not republish,
+  bump the version, or create a new candidate just to recover from this delay.
+  Integrity mismatches, a newer `alpha` tag, and authorization errors still fail
+  immediately instead of being treated as processing delays.
 - An existing Git tag must resolve to the reviewed commit. Existing release assets
   must match the reviewed bytes. Conflicting tags or assets fail instead of being
   overwritten. A matching release can be completed on a retry.
