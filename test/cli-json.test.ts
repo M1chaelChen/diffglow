@@ -45,9 +45,9 @@ test('JSON mode emits one formatted success document with accurate statistics an
     after: { path: await realpath(after), width: 8, height: 6 },
     output: { path: output, width: 8, height: 6 },
     rendering: { highlightColor: '#ff00ff', highlightOpacity: 0.65 },
-    comparison: { threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false },
+    comparison: { threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', ignoreRegions: [], dimensionsChanged: false },
     stats: {
-      comparedPixels: 48, changedPixels: 4, unchangedPixels: 44, changedPercentage: 4 / 48 * 100,
+      comparedPixels: 48, ignoredPixels: 0, changedPixels: 4, unchangedPixels: 44, changedPercentage: 4 / 48 * 100,
       modifiedPixels: 4, addedPixels: 0, removedPixels: 0,
       diffBounds: { x: 3, y: 2, width: 2, height: 2 }
     },
@@ -81,7 +81,7 @@ test('JSON identical case exits 0 with null bounds and an unchanged default outp
   assert.equal(json.status, 'identical');
   assert.equal(json.exitCode, 0);
   assert.deepEqual(json.stats, {
-    comparedPixels: 48, changedPixels: 0, unchangedPixels: 48, changedPercentage: 0,
+    comparedPixels: 48, ignoredPixels: 0, changedPixels: 0, unchangedPixels: 48, changedPercentage: 0,
     modifiedPixels: 0, addedPixels: 0, removedPixels: 0, diffBounds: null
   });
   assert.equal(path.isAbsolute(json.output.path), true);
@@ -101,10 +101,10 @@ test('JSON dimension statistics serialize added and removed areas and custom sen
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '');
     const json = JSON.parse(result.stdout);
-    assert.deepEqual(json.comparison, { threshold: 1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: true });
+    assert.deepEqual(json.comparison, { threshold: 1, includeAntiAliasing: false, alignment: 'top-left', ignoreRegions: [], dimensionsChanged: true });
     assert.deepEqual([json.output.width, json.output.height], [4, 3]);
     assert.deepEqual(json.stats, {
-      comparedPixels: 12, changedPixels: 6, unchangedPixels: 6, changedPercentage: 50,
+      comparedPixels: 12, ignoredPixels: 0, changedPixels: 6, unchangedPixels: 6, changedPercentage: 50,
       modifiedPixels: 0, addedPixels: added, removedPixels: removed,
       diffBounds: { x: 2, y: 0, width: 2, height: 3 }
     });

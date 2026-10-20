@@ -16,10 +16,12 @@ export function comparisonReport(result: PairResult, exitCode: 0 | 1) {
       threshold: result.threshold,
       includeAntiAliasing: false,
       alignment: 'top-left',
+      ignoreRegions: result.ignoreRegions,
       dimensionsChanged: result.dimensionsChanged
     },
     stats: {
       comparedPixels: result.comparedPixels,
+      ignoredPixels: result.ignoredPixels,
       changedPixels: result.changedPixels,
       unchangedPixels: result.unchangedPixels,
       changedPercentage: result.changedPercentage,

@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_HIGHLIGHT_COLOR, parseHighlightColor } from './color.js';
+import { parseIgnoreRegions, type IgnoreRegion } from './regions.js';
 
 export interface Pair { id: string; before: string | null; after: string | null }
 export interface Configuration {
@@ -12,6 +13,7 @@ export interface Configuration {
   currentPattern: string;
   threshold: number;
   highlightColor: string;
+  ignoreRegions: IgnoreRegion[];
 }
 export interface InputSelection {
   mode: 'single' | 'batch';
@@ -19,10 +21,11 @@ export interface InputSelection {
   inputRoots: string[];
   threshold: number;
   highlightColor: string;
+  ignoreRegions: IgnoreRegion[];
 }
 export const defaults: Configuration = {
   baselineDir: 'baseline', currentDir: 'current', include: ['**/*'], exclude: [],
-  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1, highlightColor: DEFAULT_HIGHLIGHT_COLOR
+  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1, highlightColor: DEFAULT_HIGHLIGHT_COLOR, ignoreRegions: []
 };
 
 export function missing(error: unknown): boolean {
@@ -88,7 +91,7 @@ async function jsonFile(filename: string): Promise<unknown> {
   catch (error) { throw new Error(`Cannot read JSON file "${filename}": ${error instanceof Error ? error.message : String(error)}`); }
 }
 async function configuration(filename?: string): Promise<Configuration> {
-  const config: Configuration = { ...defaults, include: [...defaults.include], exclude: [] };
+  const config: Configuration = { ...defaults, include: [...defaults.include], exclude: [], ignoreRegions: [] };
   if (filename) {
     const data = await jsonFile(filename);
     if (!object(data)) throw new Error('Configuration must be a JSON object.');
@@ -100,6 +103,8 @@ async function configuration(filename?: string): Promise<Configuration> {
         config.threshold = value;
       } else if (key === 'highlightColor') {
         config.highlightColor = parseHighlightColor(value).hex;
+      } else if (key === 'ignoreRegions') {
+        config.ignoreRegions = parseIgnoreRegions(value);
       } else if (key === 'include' || key === 'exclude') {
         if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0) || (key === 'include' && value.length === 0)) {
           throw new Error(`${key} must be an array of nonempty glob strings${key === 'include' ? ' with at least one entry' : ''}.`);
@@ -169,7 +174,7 @@ async function manifestPairs(filename: string): Promise<Pair[]> {
 }
 
 export async function selectInputs(positionals: string[], options: {
-  manifest?: string; config?: string; threshold?: number; highlightColor?: string; outputDirectory: string;
+  manifest?: string; config?: string; threshold?: number; highlightColor?: string; ignoreRegions?: IgnoreRegion[]; outputDirectory: string;
 }): Promise<InputSelection> {
   if (options.manifest && positionals.length) throw new Error('--manifest cannot be combined with image or folder arguments.');
   let mode: 'single' | 'batch' = 'batch';
@@ -193,10 +198,11 @@ export async function selectInputs(positionals: string[], options: {
   }
   const config = await configuration(configFile);
   const highlightColor = parseHighlightColor(options.highlightColor ?? config.highlightColor).hex;
+  const ignoreRegions = parseIgnoreRegions(options.ignoreRegions ?? config.ignoreRegions);
   const threshold = options.threshold ?? config.threshold;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('Threshold must be a finite number between 0 and 1.');
   if (mode === 'single') {
-    return { mode, pairs: [{ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) }], inputRoots: [], threshold, highlightColor };
+    return { mode, pairs: [{ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) }], inputRoots: [], threshold, highlightColor, ignoreRegions };
   }
   let pairs: Pair[];
   if (options.manifest) pairs = await manifestPairs(options.manifest);
@@ -210,5 +216,5 @@ export async function selectInputs(positionals: string[], options: {
     if (!pairs.length) throw new Error('No PNG/JPEG screenshots matched the configured folders and patterns.');
   }
   pairs.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  return { mode: 'batch', pairs, inputRoots: roots, threshold, highlightColor };
+  return { mode: 'batch', pairs, inputRoots: roots, threshold, highlightColor, ignoreRegions };
 }

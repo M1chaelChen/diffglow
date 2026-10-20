@@ -6,6 +6,7 @@ import { diffScreenshots } from './diff.js';
 import { selectInputs } from './discovery.js';
 import { runComparisons, type SuccessEntry } from './batch.js';
 import { comparisonReport, errorReport } from './report.js';
+import { parseIgnoreRegion } from './regions.js';
 
 const HELP = `Usage: diffglow <before.png|jpg> <after.png|jpg> [options]
        diffglow <baseline-folder> <current-folder> [options]
@@ -23,6 +24,7 @@ Options:
       --html              Generate an offline HTML report and image assets
       --threshold <0..1>  Per-pixel color tolerance (default: 0.1)
       --highlight-color <hex>  Highlight #RGB or #RRGGBB (default: #ff00ff)
+      --ignore-region <x,y,width,height>  Ignore a pixel rectangle; repeatable
       --fail-on-diff      Exit 1 on changes after writing outputs
       --json              Write detailed JSON to stdout instead of text
   -h, --help              Show this help
@@ -35,6 +37,8 @@ function printComparison(result: ReturnType<typeof comparisonReport>) {
   const percentage = result.stats.changedPercentage.toFixed(6).replace(/\.?0+$/, '');
   const noun = result.stats.changedPixels === 1 ? 'pixel' : 'pixels';
   console.log(`${result.stats.changedPixels.toLocaleString('en-US')} changed ${noun} (${percentage}%).`);
+  if (result.comparison.ignoreRegions.length) console.log(`${result.stats.ignoredPixels.toLocaleString('en-US')} ignored pixels; ${result.stats.comparedPixels.toLocaleString('en-US')} compared pixels.`);
+  if (result.stats.comparedPixels === 0) console.log('No pixels compared: ignore regions cover the entire image area.');
   if (result.comparison.dimensionsChanged && result.before && result.after) {
     console.log(`Dimensions: ${result.before.width}×${result.before.height} → ` +
       `${result.after.width}×${result.after.height}; aligned at top-left without resizing.`);
@@ -60,6 +64,7 @@ async function main(): Promise<number> {
         html: { type: 'boolean', default: false },
         threshold: { type: 'string' },
         'highlight-color': { type: 'string' },
+        'ignore-region': { type: 'string', multiple: true },
         'fail-on-diff': { type: 'boolean', default: false },
         json: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -80,6 +85,7 @@ async function main(): Promise<number> {
     const selection = await selectInputs(positionals, {
       manifest: values.manifest, config: values.config,
       highlightColor: values['highlight-color'],
+      ignoreRegions: values['ignore-region']?.map(parseIgnoreRegion),
       threshold: values.threshold === undefined ? undefined : Number(values.threshold), outputDirectory
     });
     if (selection.mode === 'batch' && values.output !== undefined) throw new Error('Use --output-dir for batch comparisons; --output is a single PNG path.');
@@ -87,7 +93,7 @@ async function main(): Promise<number> {
     if (selection.mode === 'single' && !values.html) {
       const pair = selection.pairs[0];
       const result = await diffScreenshots(pair.before!, pair.after!, {
-        output: values.output, threshold: selection.threshold, highlightColor: selection.highlightColor
+        output: values.output, threshold: selection.threshold, highlightColor: selection.highlightColor, ignoreRegions: selection.ignoreRegions
       });
       const exitCode = values['fail-on-diff'] && result.changedPixels > 0 ? 1 : 0;
       const report = comparisonReport(result, exitCode);
@@ -114,6 +120,8 @@ async function main(): Promise<number> {
       const s = report.summary;
       console.log(`${s.total} comparisons: ${s.different} changed, ${s.identical} identical, ${s.added} added, ${s.removed} removed, ${s.errors} errors.`);
       console.log(`${s.changedPixels.toLocaleString('en-US')} changed pixels (${s.changedPercentage.toFixed(6).replace(/\.?0+$/, '')}%).`);
+      if (report.comparison.ignoreRegions.length) console.log(`${s.ignoredPixels.toLocaleString('en-US')} ignored pixels; ${s.comparedPixels.toLocaleString('en-US')} compared pixels.`);
+      if (s.compared > 0 && s.comparedPixels === 0) console.log('No pixels compared: ignore regions cover the entire image area.');
       for (const entry of report.results) if (entry.status === 'error') console.error(`Error [${entry.id}]: ${entry.error.message}`);
       console.log(`JSON results: ${path.join(report.outputDirectory, 'results.json')}`);
       if (report.htmlReportPath) console.log(`HTML report: ${report.htmlReportPath}`);

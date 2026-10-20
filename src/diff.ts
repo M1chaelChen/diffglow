@@ -4,6 +4,7 @@ import path from 'node:path';
 import pixelmatch from 'pixelmatch';
 import sharp from 'sharp';
 import { HIGHLIGHT_OPACITY, parseHighlightColor } from './color.js';
+import { ignoreMask, parseIgnoreRegions, type IgnoreRegion } from './regions.js';
 
 const MAX_PIXELS = 25_000_000;
 const MASK_COLOR = [255, 0, 255] as const;
@@ -12,6 +13,7 @@ export interface DiffOptions {
   output?: string;
   threshold?: number;
   highlightColor?: string;
+  ignoreRegions?: IgnoreRegion[];
   previews?: { baseline: string; current: string };
 }
 
@@ -33,6 +35,8 @@ export interface PairResult extends Dimensions {
   dimensionsChanged: boolean;
   threshold: number;
   highlightColor: string;
+  ignoreRegions: IgnoreRegion[];
+  ignoredPixels: number;
   changedPixels: number;
   unchangedPixels: number;
   modifiedPixels: number;
@@ -165,6 +169,7 @@ export async function comparePair(
   afterPath: string | null,
   options: DiffOptions = {}
 ): Promise<PairResult> {
+  const ignoreRegions = parseIgnoreRegions(options.ignoreRegions);
   const { hex: highlightColor, rgb } = parseHighlightColor(options.highlightColor);
   const threshold = options.threshold ?? 0.1;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
@@ -191,10 +196,26 @@ export async function comparePair(
   const beforePixels = before ? align(before, width, height) : Buffer.alloc(width * height * 4);
   const afterPixels = after ? align(after, width, height) : Buffer.alloc(width * height * 4);
   const mask = Buffer.alloc(width * height * 4);
-  if (before && after) pixelmatch(beforePixels, afterPixels, mask, width, height, {
-    threshold, includeAA: false, diffMask: true, diffColor: [...MASK_COLOR]
-  });
+  const ignored = ignoreMask(ignoreRegions, width, height);
+  if (before && after) {
+    let comparisonBefore = beforePixels;
+    let comparisonAfter = afterPixels;
+    if (ignored) {
+      comparisonBefore = Buffer.from(beforePixels);
+      comparisonAfter = Buffer.from(afterPixels);
+      // AA detection examines neighbors, including ignored pixels. Canonicalize
+      // both sides so changing an ignored clock cannot change adjacent results.
+      for (let i = 0; i < ignored.length; i++) if (ignored[i]) {
+        comparisonBefore.fill(0, i * 4, i * 4 + 4);
+        comparisonAfter.fill(0, i * 4, i * 4 + 4);
+      }
+    }
+    pixelmatch(comparisonBefore, comparisonAfter, mask, width, height, {
+      threshold, includeAA: false, diffMask: true, diffColor: [...MASK_COLOR], ignoreMask: ignored
+    });
+  }
   const highlighted = Buffer.from(afterPixels);
+  let ignoredPixels = 0;
   let changedPixels = 0;
   let modifiedPixels = 0;
   let addedPixels = 0;
@@ -209,6 +230,7 @@ export async function comparePair(
       const inBefore = before !== null && x < before.width && y < before.height;
       const inAfter = after !== null && x < after.width && y < after.height;
       if (!inBefore && !inAfter) continue;
+      if (ignored?.[y * width + x]) { ignoredPixels++; continue; }
       // Size changes always count, including transparent added/removed areas.
       const changed = inBefore !== inAfter || mask[offset + 3] !== 0;
       if (!changed) continue;
@@ -225,7 +247,7 @@ export async function comparePair(
     }
   }
   const comparedPixels = (before ? before.width * before.height : 0) + (after ? after.width * after.height : 0) -
-    Math.min(before?.width ?? 0, after?.width ?? 0) * Math.min(before?.height ?? 0, after?.height ?? 0);
+    Math.min(before?.width ?? 0, after?.width ?? 0) * Math.min(before?.height ?? 0, after?.height ?? 0) - ignoredPixels;
   // Check again immediately before replacing an existing destination.
   await assertSafeOutput(outputPath, inputs);
   try {
@@ -250,13 +272,15 @@ export async function comparePair(
     dimensionsChanged: before?.width !== after?.width || before?.height !== after?.height,
     threshold,
     highlightColor,
+    ignoreRegions,
+    ignoredPixels,
     changedPixels,
     unchangedPixels: comparedPixels - changedPixels,
     modifiedPixels,
     addedPixels,
     removedPixels,
     comparedPixels,
-    changedPercentage: changedPixels / comparedPixels * 100,
+    changedPercentage: comparedPixels ? changedPixels / comparedPixels * 100 : 0,
     diffBounds: changedPixels === 0 ? null : {
       x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1
     },

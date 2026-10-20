@@ -70,10 +70,11 @@ remain visible in the verification report.
 | `-o, --output <path>` | Output `.png` path; defaults to `diff.png`. |
 | `--threshold <0..1>` | Per-pixel color tolerance; defaults to `0.1`. Lower is more sensitive. |
 | `--highlight-color <hex>` | Overlay color as `#RGB` or `#RRGGBB`; defaults to magenta (`#ff00ff`). |
+| `--ignore-region <x,y,width,height>` | Exclude a rectangle from comparison; repeat for multiple areas. |
 | `--fail-on-diff` | Exit `1` when changes exist, after saving the highlighted PNG. |
 | `--json` | Write detailed comparison statistics as JSON to stdout; still save the PNG. |
 | `--manifest <file>` | Compare explicitly named pairs from a JSON manifest. |
-| `--config <file>` | Load JSON folder names, matching rules, threshold, and highlight color. |
+| `--config <file>` | Load JSON folder names, matching rules, threshold, highlight color, and ignored regions. |
 | `--output-dir <dir>` | Batch/HTML report directory; defaults to `diffglow-report`. |
 | `--html` | Generate an offline HTML review page and screenshot assets. |
 | `-h, --help` | Show usage. |
@@ -103,6 +104,39 @@ Opacity stays at 65%. The color affects highlighted pixels, including added and
 removed areas, and the HTML report legend; it does not affect which pixels count
 as changes or the comparison statistics.
 
+### Ignore clocks and other dynamic areas
+
+Exclude a known changing area, such as a mobile status-bar clock:
+
+```bash
+diffglow before.png after.png --ignore-region '0,0,160,60' -o highlighted.png
+```
+
+Repeat the flag for multiple rectangles:
+
+```bash
+diffglow screenshots/ --ignore-region '0,0,160,60' --ignore-region '900,20,100,40' --html
+```
+
+Coordinates are integer **screenshot pixels**, after EXIF orientation is applied,
+with `x,y` measured from the top-left. Use the image's actual pixel dimensions,
+which may differ from CSS or device-independent coordinates. `x` and `y` must be
+nonnegative; width and height must be positive. Coordinates, dimensions, and their
+sums must be safe integers. Rectangles are clipped to the image coverage, and
+overlapping ignored pixels count once.
+
+Ignored pixels are excluded from changed, unchanged, and compared counts, so they
+do not contribute to the changed percentage or `--fail-on-diff`. They keep the
+current screenshot's original appearance without a highlight; ignored areas beyond
+the current screenshot stay transparent. JSON and HTML reports record the regions
+and ignored-pixel count. If nothing remains to compare, the percentage is `0` and
+`--fail-on-diff` exits `0`; this makes no visual assertion about the ignored image.
+
+The same regions apply to every comparison in a folder or manifest run. Use
+separate runs for different screenshot geometries. There is no automatic clock
+detection or per-pair region override. Keep masks narrow enough to retain the
+visual coverage you need.
+
 ## Compare folders or multiple files
 
 Pass two directories to compare matching relative filenames recursively:
@@ -130,8 +164,9 @@ diffglow screenshots/ --html --output-dir visual-results
 PNG, `.jpg`, and `.jpeg` filenames are discovered, including uppercase extensions.
 Matching is case-sensitive and uses the entire relative filename by default.
 Screenshots found only in `current/` are **added**; those found only in `baseline/`
-are **removed**. Their entire image area is highlighted. Unrelated file types and
-symlinks encountered during directory traversal are ignored. Explicit file inputs
+are **removed**. Their image area outside ignored regions is highlighted.
+Unrelated file types and symlinks encountered during directory traversal are
+ignored. Explicit file inputs
 and manifests retain the existing input-alias safeguards.
 
 For arbitrary files, create a manifest. Paths resolve relative to the manifest,
@@ -173,13 +208,16 @@ Unknown settings and invalid patterns are rejected before comparisons start.
   "baselinePattern": "{key}",
   "currentPattern": "{key}",
   "threshold": 0.1,
-  "highlightColor": "#ff00ff"
+  "highlightColor": "#ff00ff",
+  "ignoreRegions": [{ "x": 0, "y": 0, "width": 160, "height": 60 }]
 }
 ```
 
 Defaults are `baselineDir: "baseline"`, `currentDir: "current"`, and the other
-values above with an empty exclusion list. CLI `--threshold` and
-`--highlight-color` override their respective config settings.
+values above with an empty exclusion list and `ignoreRegions: []`. CLI
+`--threshold` and `--highlight-color` override their respective config settings.
+Providing any `--ignore-region` flags replaces the configured region array with
+the CLI rectangles. The configuration must still be valid even when overridden.
 Explicit manifest pairs are not filtered or renamed by folder matching rules.
 
 Globs use forward slashes: `*` matches within a path segment, `**` matches complete
@@ -215,6 +253,8 @@ entries reuse the single-pair statistics and include an `id` and relative
 `artifacts` paths. Added/removed entries have a null missing input; failed entries
 contain an error message and null artifacts. Results are sorted by identity.
 The root `rendering` object records the selected highlight color and opacity.
+`comparison.ignoreRegions` records the configured rectangles, and
+`summary.ignoredPixels` sums ignored pixels across successful comparisons.
 
 Aggregate changed percentage is the sum of changed pixels divided by the sum of
 compared pixels, not the average of individual percentages. Failed entries are
@@ -229,6 +269,10 @@ works with a single file pair:
 ```bash
 diffglow before.png after.png -o highlighted.png --html --output-dir review
 ```
+
+The report shows ignored-pixel counts and comparison settings, and warns when a
+comparison has no pixels left to evaluate. Added/removed file statuses remain
+visible even when all of their pixels are ignored.
 
 ```text
 visual-results/
@@ -263,11 +307,13 @@ report directory even when comparison exits with differences or per-file errors.
   Transparency is preserved and compared using pixelmatch's transparency handling.
 - Images align at the top-left without resizing. Output dimensions use the larger
   width and height of the two inputs.
-- Added and removed areas always count as changes, regardless of threshold.
-  Removed content from the first screenshot remains visible under the highlight tint.
+- Added and removed areas outside ignored regions count as changes, regardless of
+  threshold. Removed content from the first screenshot remains visible under the
+  highlight tint.
 - The changed percentage is changed pixels divided by the union of both image
-  areas. Parts of the output canvas covered by neither input stay transparent and
-  are excluded from that percentage.
+  areas, excluding ignored pixels. Parts of the output canvas covered by neither
+  input stay transparent and are excluded from that percentage. A comparison with
+  no remaining pixels reports `0%`.
 - Each decoded input and the combined output canvas are limited to 25 million
   pixels. Animated and multi-page images are rejected.
 
@@ -301,11 +347,13 @@ A comparison with a changed rectangle might report:
     "threshold": 0.1,
     "includeAntiAliasing": false,
     "alignment": "top-left",
-    "dimensionsChanged": false
+    "dimensionsChanged": false,
+    "ignoreRegions": []
   },
   "rendering": { "highlightColor": "#ff00ff", "highlightOpacity": 0.65 },
   "stats": {
     "comparedPixels": 10000,
+    "ignoredPixels": 0,
     "changedPixels": 300,
     "unchangedPixels": 9700,
     "changedPercentage": 3,
@@ -325,13 +373,16 @@ single-pair and batch reports; the JSON schema version remains `1`.
 `addedPixels` and `removedPixels` count areas covered by only the corresponding
 input. These describe image footprints rather than classifying UI elements.
 The three counts sum to `changedPixels`; `comparedPixels` is the union of both
-image areas. Bounds use zero-based coordinates from the top-left and enclose all
+image areas minus ignored pixels. `ignoredPixels` counts the union of configured
+regions within either image's footprint; it excludes empty canvas space. Bounds
+use zero-based coordinates from the top-left and enclose all
 changed pixels. Identical comparisons have `status: "identical"` and
 `diffBounds: null`.
 
 `--fail-on-diff` keeps its usual behavior: write the PNG and JSON report, then
-exit `1` when changes exist. With `--json`, errors produce a JSON report on stdout,
-leave stderr empty, and exit `2`:
+exit `1` when non-ignored changed pixels exist. Added/removed file statuses alone
+do not fail the check when their pixels are all ignored. With `--json`, errors
+produce a JSON report on stdout, leave stderr empty, and exit `2`:
 
 ```json
 {

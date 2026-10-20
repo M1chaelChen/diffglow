@@ -49,9 +49,35 @@ fails. Use a distinct report directory per run and keep verification plans and
 agent reports outside the generated directory: rerunning replaces that directory.
 Keep generated captures out of source control unless project policy says otherwise.
 
+For known dynamic areas such as a mobile status-bar clock, use a narrow rectangle
+in normalized screenshot pixels:
+
+```sh
+diffglow captures/base captures/candidate --ignore-region '0,0,160,60' --html --json --output-dir artifacts/diffglow/run-002
+```
+
+Repeat `--ignore-region 'x,y,width,height'` for multiple areas, or configure
+`"ignoreRegions": [{"x": 0, "y": 0, "width": 160, "height": 60}]` in JSON.
+Coordinates start at the top-left after orientation normalization, using actual
+image pixels rather than CSS/device-independent coordinates. Positions must be
+nonnegative integers and dimensions positive integers, with safe integer sums.
+Rectangles clip to image coverage and overlapping pixels count once. CLI regions
+replace the configured array; all configured values must still be valid.
+
+The same regions apply to every pair in the run; use separate runs for different
+geometries. Diffglow does not detect clocks automatically or provide per-pair
+region overrides. Record the regions with the evidence and inspect that they
+do not hide relevant UI. Ignored pixels retain current-image appearance, are not
+highlighted, and are excluded from changed/unchanged/compared counts and bounds.
+JSON records `comparison.ignoreRegions`, `stats.ignoredPixels`, and batch
+`summary.ignoredPixels`; HTML displays the exclusions. If no pixels remain, the
+percentage is `0` and `--fail-on-diff` exits `0`, but the visual check is
+inconclusive. Added/removed file statuses still describe coverage and require
+interpretation even when all of their pixels are ignored.
+
 Exit `0` means the comparison completed, even if images differ. With
-`--fail-on-diff`, exit `1` means raw differences were found; it does not establish
-that they are regressions. Exit `2` means processing failed. Record E2E results
+`--fail-on-diff`, exit `1` means non-ignored raw differences were found; it does not
+establish that they are regressions. Exit `2` means processing failed. Record E2E results
 separately so a completed comparison cannot hide a failed test run. Preserve any
 existing strict visual gate; do not turn it green by swallowing failures.
 

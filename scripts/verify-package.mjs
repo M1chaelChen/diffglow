@@ -131,7 +131,7 @@ try {
       assert.match(filename, allowed, `Unintended packed file: ${filename}`);
       inspectText(filename, content);
     }
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/color.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
+    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/color.js', 'dist/regions.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
       assert.ok(files.has(required), `Missing packed release file: ${required}`);
     }
     for (const [filename, content] of files) {
@@ -223,7 +223,9 @@ try {
   for (let y = 2; y < 4; y++) for (let x = 3; x < 5; x++) data.set([0, 100, 200, 255], (y * 8 + x) * 4);
   const after = await image('after image.png', 8, 6, data);
   await check('installed command help and version', async () => {
-    assert.match(run(['--help']).stdout, /Usage: diffglow/);
+    const help = run(['--help']).stdout;
+    assert.match(help, /Usage: diffglow/);
+    assert.match(help, /--ignore-region/);
     assert.equal(run(['--version']).stdout.trim(), manifest.version);
   });
   await check('identical images and default output preserve all pixels', async () => {
@@ -271,9 +273,10 @@ try {
     assert.deepEqual(payload.output, { path: output, width: 8, height: 6 });
     for (const image of [payload.before, payload.after, payload.output]) assert.ok(path.isAbsolute(image.path));
     assert.deepEqual(payload.comparison, {
-      threshold: 0.2, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false
+      threshold: 0.2, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false, ignoreRegions: []
     });
     assert.equal(payload.stats.comparedPixels, 48);
+    assert.equal(payload.stats.ignoredPixels, 0);
     assert.equal(payload.stats.changedPixels, 4);
     assert.equal(payload.stats.unchangedPixels, 44);
     assert.equal(payload.stats.modifiedPixels, 4);
@@ -291,10 +294,10 @@ try {
     assert.equal(payload.status, 'identical');
     assert.deepEqual(payload.stats, {
       comparedPixels: 48, changedPixels: 0, unchangedPixels: 48, changedPercentage: 0,
-      modifiedPixels: 0, addedPixels: 0, removedPixels: 0, diffBounds: null
+      modifiedPixels: 0, addedPixels: 0, removedPixels: 0, ignoredPixels: 0, diffBounds: null
     });
     assert.deepEqual(payload.comparison, {
-      threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false
+      threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false, ignoreRegions: []
     });
     assert.equal(payload.output.path, output);
     assert.deepEqual(await readPixels(output), await readPixels(before));
@@ -306,6 +309,69 @@ try {
     assert.match(payload.error.message, /threshold/i);
     assert.doesNotMatch(payload.error.message, /\n\s+at /);
     assert.deepEqual(Object.keys(payload).sort(), ['error', 'exitCode', 'schemaVersion', 'status']);
+  });
+  await check('installed ignore regions suppress clock changes, union repeated rectangles, and retain real changes', async () => {
+    const output = path.join(inputDir, 'ignored clock.png');
+    const regions = [{ x: 3, y: 2, width: 1, height: 2 }, { x: 4, y: 2, width: 1, height: 2 }];
+    const ignored = runJSON([before, after, '-o', output, '--ignore-region', '3,2,1,2',
+      '--ignore-region', '4,2,1,2', '--ignore-region', '3,2,1,2', '--fail-on-diff']);
+    assert.equal(ignored.status, 'identical');
+    assert.deepEqual(ignored.comparison.ignoreRegions, [...regions, regions[0]]);
+    assert.equal(ignored.stats.changedPixels, 0); assert.equal(ignored.stats.ignoredPixels, 4);
+    assert.equal(ignored.stats.comparedPixels, 44); assert.equal(ignored.stats.unchangedPixels, 44);
+    assert.equal(ignored.stats.changedPercentage, 0); assert.equal(ignored.stats.diffBounds, null);
+    assert.deepEqual(await readPixels(output), await readPixels(after), 'Ignored current pixels must remain visible without highlights.');
+    const current = Buffer.from(data); current.set([0, 0, 0, 255], 0);
+    const realChange = await image('clock and real change.png', 8, 6, current);
+    const changed = runJSON([before, realChange, '-o', output, '--ignore-region', '3,2,2,2', '--fail-on-diff'], 1);
+    assert.equal(changed.stats.changedPixels, 1); assert.equal(changed.stats.ignoredPixels, 4);
+    assert.equal(changed.stats.changedPercentage, 1 / 44 * 100);
+    assert.deepEqual(changed.stats.diffBounds, { x: 0, y: 0, width: 1, height: 1 });
+    const highlighted = await readPixels(output);
+    assert.deepEqual([...highlighted.subarray(0, 4)], [166, 0, 166, 255]);
+    const clockOffset = (2 * 8 + 3) * 4;
+    assert.deepEqual(highlighted.subarray(clockOffset, clockOffset + 4), current.subarray(clockOffset, clockOffset + 4));
+    const all = runJSON([before, realChange, '-o', output, '--ignore-region', '0,0,999,999', '--fail-on-diff']);
+    assert.equal(all.stats.ignoredPixels, 48); assert.equal(all.stats.comparedPixels, 0);
+    assert.equal(all.stats.changedPixels, 0); assert.equal(all.stats.changedPercentage, 0);
+    assert.deepEqual(await readPixels(output), await readPixels(realChange));
+  });
+  await check('installed folder config carries ignore regions into JSON, HTML, image assets, and CLI overrides', async () => {
+    const root = path.join(inputDir, 'ignored status bar screenshots');
+    const baseline = path.join(root, 'baseline'); const current = path.join(root, 'current');
+    await mkdir(baseline, { recursive: true }); await mkdir(current);
+    await copyFile(before, path.join(baseline, 'mobile.png')); await copyFile(after, path.join(current, 'mobile.png'));
+    const regions = [{ x: 3, y: 2, width: 2, height: 2 }];
+    await writeFile(path.join(root, 'diffglow.config.json'), JSON.stringify({ ignoreRegions: regions }));
+    const output = path.join(inputDir, 'ignored status bar report');
+    const payload = runJSON([root, '--output-dir', output, '--html', '--fail-on-diff']);
+    assert.equal(payload.status, 'identical'); assert.equal(payload.summary.identical, 1);
+    assert.equal(payload.summary.ignoredPixels, 4); assert.equal(payload.summary.comparedPixels, 44);
+    assert.equal(payload.summary.changedPixels, 0); assert.deepEqual(payload.comparison.ignoreRegions, regions);
+    const entry = payload.results[0]; assert.deepEqual(entry.comparison.ignoreRegions, regions);
+    assert.equal(entry.stats.ignoredPixels, 4); assert.equal(entry.stats.changedPixels, 0);
+    assert.deepEqual(await readPixels(path.join(output, entry.artifacts.diff)), await readPixels(after));
+    const html = await readFile(path.join(output, 'index.html'), 'utf8');
+    assert.match(html, /ignored/i);
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    assert.ok(embedded); assert.deepEqual(JSON.parse(embedded[1]), payload);
+    assert.deepEqual(JSON.parse(await readFile(path.join(output, 'results.json'), 'utf8')), payload);
+    const override = runJSON([root, '--output-dir', output, '--ignore-region', '3,2,1,2', '--fail-on-diff'], 1);
+    assert.deepEqual(override.comparison.ignoreRegions, [{ x: 3, y: 2, width: 1, height: 2 }]);
+    assert.equal(override.summary.ignoredPixels, 2); assert.equal(override.summary.changedPixels, 2);
+    assert.equal((await stat(override.results[0].output.path)).isFile(), true);
+  });
+  await check('installed invalid ignore regions return exit 2 without replacing output', async () => {
+    const output = path.join(inputDir, 'preserved ignore result.png'); const sentinel = Buffer.from('preserve existing output');
+    await writeFile(output, sentinel);
+    for (const value of ['', '0,0,0,1', '-1,0,1,1', '0,0,1.5,2', '0,0,1', '9007199254740991,0,1,1']) {
+      const payload = runJSON([before, after, '-o', output, `--ignore-region=${value}`], 2);
+      assert.match(payload.error.message, /ignore region/i); assert.deepEqual(await readFile(output), sentinel);
+    }
+    const config = path.join(inputDir, 'invalid ignore config.json');
+    await writeFile(config, JSON.stringify({ ignoreRegions: [{ x: 0, y: 0, width: 0, height: 1 }] }));
+    const payload = runJSON([before, after, '-o', output, '--config', config, '--ignore-region', '0,0,1,1'], 2);
+    assert.match(payload.error.message, /ignore region/i); assert.deepEqual(await readFile(output), sentinel);
   });
   await check('installed folder batch produces portable HTML assets, weighted JSON, missing sides, and continued errors', async () => {
     const root = path.join(inputDir, 'batch screenshots');

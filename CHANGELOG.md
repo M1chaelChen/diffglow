@@ -2,6 +2,12 @@
 
 ## 0.1.0-alpha.5
 
+- Ignore rectangular areas such as mobile clocks with repeatable `--ignore-region`
+  flags or JSON `ignoreRegions`, across single, folder, and manifest comparisons.
+- Exclude ignored pixels from highlights, comparison totals, percentages, bounds,
+  and failure checks; report regions and ignored-pixel counts in JSON and HTML.
+- Handle overlapping and clipped regions consistently, and identify comparisons
+  with no remaining pixels without claiming visual coverage.
 - Configure the highlight color with `--highlight-color` or JSON `highlightColor`,
   accepting `#RGB` and `#RRGGBB` while retaining the default magenta and 65% opacity.
 - Apply the selected color to single, folder, and manifest comparisons and HTML

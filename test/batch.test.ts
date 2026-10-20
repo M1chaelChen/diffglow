@@ -53,7 +53,7 @@ test('folder batch reports all statuses, continues after decoding errors, and we
   ]);
   assert.deepEqual(report.summary, {
     total: 5, compared: 4, different: 1, identical: 1, added: 1, removed: 1, errors: 1,
-    comparedPixels: 44, changedPixels: 28, unchangedPixels: 16, modifiedPixels: 16, addedPixels: 6, removedPixels: 6, changedPercentage: 28 / 44 * 100
+    comparedPixels: 44, ignoredPixels: 0, changedPixels: 28, unchangedPixels: 16, modifiedPixels: 16, addedPixels: 6, removedPixels: 6, changedPercentage: 28 / 44 * 100
   });
   const disk = JSON.parse(await readFile(path.join(report.outputDirectory, 'results.json'), 'utf8'));
   assert.deepEqual(disk, report);
