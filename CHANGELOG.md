@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+- Configure the highlight color with `--highlight-color` or JSON `highlightColor`,
+  accepting `#RGB` and `#RRGGBB` while retaining the default magenta and 65% opacity.
+- Apply the selected color to single, folder, and manifest comparisons and HTML
+  report legends; record normalized rendering settings in JSON reports without
+  changing comparison statistics.
+
 ## 0.1.0-alpha.4
 
 - Bundle an optional agent skill for adding Diffglow to existing E2E workflows,

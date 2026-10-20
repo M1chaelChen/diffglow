@@ -1,4 +1,5 @@
 import type { PairResult } from './diff.js';
+import { HIGHLIGHT_OPACITY } from './color.js';
 
 /** Versioned CLI report; percentages retain their unrounded comparison precision. */
 export function comparisonReport(result: PairResult, exitCode: 0 | 1) {
@@ -10,6 +11,7 @@ export function comparisonReport(result: PairResult, exitCode: 0 | 1) {
     before: result.before ? { path: result.beforePath!, ...result.before } : null,
     after: result.after ? { path: result.afterPath!, ...result.after } : null,
     output: { path: result.outputPath, width: result.width, height: result.height },
+    rendering: { highlightColor: result.highlightColor, highlightOpacity: HIGHLIGHT_OPACITY },
     comparison: {
       threshold: result.threshold,
       includeAntiAliasing: false,

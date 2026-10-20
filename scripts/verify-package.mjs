@@ -131,7 +131,7 @@ try {
       assert.match(filename, allowed, `Unintended packed file: ${filename}`);
       inspectText(filename, content);
     }
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
+    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/color.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
       assert.ok(files.has(required), `Missing packed release file: ${required}`);
     }
     for (const [filename, content] of files) {
@@ -241,6 +241,24 @@ try {
         x >= 3 && x < 5 && y >= 2 && y < 4 ? [166, 35, 236, 255] : [255, 255, 255, 255]);
     }
     assert.match(run([before, after, '--output', output]).stdout, /4 changed pixels/);
+  });
+  await check('installed custom highlight colors, config overrides, HTML legend, and rendering JSON', async () => {
+    const output = path.join(inputDir, 'green diff.png');
+    const payload = runJSON([before, after, '--output', output, '--highlight-color', '#0F0', '--fail-on-diff'], 1);
+    assert.deepEqual(payload.rendering, { highlightColor: '#00ff00', highlightOpacity: 0.65 });
+    assert.equal(payload.stats.changedPixels, 4);
+    const highlighted = await readPixels(output);
+    assert.deepEqual([...highlighted.subarray((2 * 8 + 3) * 4, (2 * 8 + 3) * 4 + 4)], [0, 201, 70, 255]);
+    assert.deepEqual([...highlighted.subarray(0, 4)], [255, 255, 255, 255]);
+    const config = path.join(inputDir, 'color config.json');
+    await writeFile(config, JSON.stringify({ highlightColor: '#0af' }));
+    const configured = runJSON([before, after, '--output', output, '--config', config, '--html',
+      '--output-dir', path.join(inputDir, 'color report')]);
+    assert.deepEqual(configured.rendering, { highlightColor: '#00aaff', highlightOpacity: 0.65 });
+    assert.match(await readFile(path.join(inputDir, 'color report', 'index.html'), 'utf8'), /Highlights use .*#00aaff at 65% opacity/);
+    const override = runJSON([before, after, '--output', output, '--config', config, '--highlight-color', '#000']);
+    assert.deepEqual(override.rendering, { highlightColor: '#000000', highlightOpacity: 0.65 });
+    assert.deepEqual(override.stats, configured.stats);
   });
   await check('installed JSON result reports exact changes, absolute paths, settings, and output before exit 1', async () => {
     const relativeOutput = path.join('json results', 'highlighted image.png');
@@ -376,6 +394,8 @@ try {
     const cases = [[], [before], [before, after, '--unknown'], [before, after, '--threshold', ''],
       [before, after, '--threshold', 'bad'], [before, after, '--threshold=-1'], [before, after, '--threshold=1.1'],
       [before, after, '--threshold=Infinity'], [before, after, '--threshold=NaN'],
+      [before, after, '--highlight-color', ''], [before, after, '--highlight-color', 'green'],
+      [before, after, '--highlight-color', '#00000000'], [before, after, '--highlight-color'],
       ['missing.png', after], [corrupt, after], [unsupported, after],
       [before, after, '-o', 'invalid.jpg'], [before, after, '-o', directory]];
     for (const args of cases) {

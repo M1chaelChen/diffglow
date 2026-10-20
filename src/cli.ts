@@ -12,7 +12,7 @@ const HELP = `Usage: diffglow <before.png|jpg> <after.png|jpg> [options]
        diffglow <screenshot-root> [options]
        diffglow --manifest <pairs.json> [options]
 
-Highlights changed pixels in magenta over the current screenshot.
+Highlights changed pixels over the current screenshot (magenta by default).
 A screenshot root contains baseline/ and current/ (or diffglow.config.json).
 
 Options:
@@ -22,6 +22,7 @@ Options:
       --config <file>     JSON folder names, globs, templates, and threshold
       --html              Generate an offline HTML report and image assets
       --threshold <0..1>  Per-pixel color tolerance (default: 0.1)
+      --highlight-color <hex>  Highlight #RGB or #RRGGBB (default: #ff00ff)
       --fail-on-diff      Exit 1 on changes after writing outputs
       --json              Write detailed JSON to stdout instead of text
   -h, --help              Show this help
@@ -58,6 +59,7 @@ async function main(): Promise<number> {
         'output-dir': { type: 'string' }, manifest: { type: 'string' }, config: { type: 'string' },
         html: { type: 'boolean', default: false },
         threshold: { type: 'string' },
+        'highlight-color': { type: 'string' },
         'fail-on-diff': { type: 'boolean', default: false },
         json: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -77,13 +79,16 @@ async function main(): Promise<number> {
     const outputDirectory = path.resolve(values['output-dir'] ?? 'diffglow-report');
     const selection = await selectInputs(positionals, {
       manifest: values.manifest, config: values.config,
+      highlightColor: values['highlight-color'],
       threshold: values.threshold === undefined ? undefined : Number(values.threshold), outputDirectory
     });
     if (selection.mode === 'batch' && values.output !== undefined) throw new Error('Use --output-dir for batch comparisons; --output is a single PNG path.');
     if (selection.mode === 'single' && !values.html && values['output-dir'] !== undefined) throw new Error('--output-dir requires batch inputs or --html.');
     if (selection.mode === 'single' && !values.html) {
       const pair = selection.pairs[0];
-      const result = await diffScreenshots(pair.before!, pair.after!, { output: values.output, threshold: selection.threshold });
+      const result = await diffScreenshots(pair.before!, pair.after!, {
+        output: values.output, threshold: selection.threshold, highlightColor: selection.highlightColor
+      });
       const exitCode = values['fail-on-diff'] && result.changedPixels > 0 ? 1 : 0;
       const report = comparisonReport(result, exitCode);
       if (json) console.log(JSON.stringify(report, null, 2));

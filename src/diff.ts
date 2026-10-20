@@ -3,14 +3,15 @@ import { mkdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promis
 import path from 'node:path';
 import pixelmatch from 'pixelmatch';
 import sharp from 'sharp';
+import { HIGHLIGHT_OPACITY, parseHighlightColor } from './color.js';
 
 const MAX_PIXELS = 25_000_000;
-const HIGHLIGHT = [255, 0, 255] as const;
-const HIGHLIGHT_OPACITY = 0.65;
+const MASK_COLOR = [255, 0, 255] as const;
 
 export interface DiffOptions {
   output?: string;
   threshold?: number;
+  highlightColor?: string;
   previews?: { baseline: string; current: string };
 }
 
@@ -31,6 +32,7 @@ export interface PairResult extends Dimensions {
   after: Dimensions | null;
   dimensionsChanged: boolean;
   threshold: number;
+  highlightColor: string;
   changedPixels: number;
   unchangedPixels: number;
   modifiedPixels: number;
@@ -124,12 +126,12 @@ function align(image: Image, width: number, height: number): Buffer {
   return result;
 }
 
-function highlight(data: Buffer, offset: number): void {
+function highlight(data: Buffer, offset: number, color: readonly [number, number, number]): void {
   const backgroundAlpha = data[offset + 3] / 255;
   const alpha = HIGHLIGHT_OPACITY + backgroundAlpha * (1 - HIGHLIGHT_OPACITY);
   for (let channel = 0; channel < 3; channel++) {
     data[offset + channel] = Math.round((
-      HIGHLIGHT[channel] * HIGHLIGHT_OPACITY +
+      color[channel] * HIGHLIGHT_OPACITY +
       data[offset + channel] * backgroundAlpha * (1 - HIGHLIGHT_OPACITY)
     ) / alpha);
   }
@@ -163,6 +165,7 @@ export async function comparePair(
   afterPath: string | null,
   options: DiffOptions = {}
 ): Promise<PairResult> {
+  const { hex: highlightColor, rgb } = parseHighlightColor(options.highlightColor);
   const threshold = options.threshold ?? 0.1;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
     throw new Error('Threshold must be a finite number between 0 and 1.');
@@ -189,7 +192,7 @@ export async function comparePair(
   const afterPixels = after ? align(after, width, height) : Buffer.alloc(width * height * 4);
   const mask = Buffer.alloc(width * height * 4);
   if (before && after) pixelmatch(beforePixels, afterPixels, mask, width, height, {
-    threshold, includeAA: false, diffMask: true, diffColor: [...HIGHLIGHT]
+    threshold, includeAA: false, diffMask: true, diffColor: [...MASK_COLOR]
   });
   const highlighted = Buffer.from(afterPixels);
   let changedPixels = 0;
@@ -210,7 +213,7 @@ export async function comparePair(
       const changed = inBefore !== inAfter || mask[offset + 3] !== 0;
       if (!changed) continue;
       if (inBefore && !inAfter) beforePixels.copy(highlighted, offset, offset, offset + 4);
-      highlight(highlighted, offset);
+      highlight(highlighted, offset, rgb);
       changedPixels++;
       if (inBefore && inAfter) modifiedPixels++;
       else if (inAfter) addedPixels++;
@@ -246,6 +249,7 @@ export async function comparePair(
     after: after ? { width: after.width, height: after.height } : null,
     dimensionsChanged: before?.width !== after?.width || before?.height !== after?.height,
     threshold,
+    highlightColor,
     changedPixels,
     unchangedPixels: comparedPixels - changedPixels,
     modifiedPixels,

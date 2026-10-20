@@ -44,6 +44,7 @@ test('JSON mode emits one formatted success document with accurate statistics an
     before: { path: await realpath(before), width: 8, height: 6 },
     after: { path: await realpath(after), width: 8, height: 6 },
     output: { path: output, width: 8, height: 6 },
+    rendering: { highlightColor: '#ff00ff', highlightOpacity: 0.65 },
     comparison: { threshold: 0.1, includeAntiAliasing: false, alignment: 'top-left', dimensionsChanged: false },
     stats: {
       comparedPixels: 48, changedPixels: 4, unchangedPixels: 44, changedPercentage: 4 / 48 * 100,

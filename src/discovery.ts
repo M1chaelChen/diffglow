@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { DEFAULT_HIGHLIGHT_COLOR, parseHighlightColor } from './color.js';
 
 export interface Pair { id: string; before: string | null; after: string | null }
 export interface Configuration {
@@ -10,16 +11,18 @@ export interface Configuration {
   baselinePattern: string;
   currentPattern: string;
   threshold: number;
+  highlightColor: string;
 }
 export interface InputSelection {
   mode: 'single' | 'batch';
   pairs: Pair[];
   inputRoots: string[];
   threshold: number;
+  highlightColor: string;
 }
 export const defaults: Configuration = {
   baselineDir: 'baseline', currentDir: 'current', include: ['**/*'], exclude: [],
-  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1
+  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1, highlightColor: DEFAULT_HIGHLIGHT_COLOR
 };
 
 export function missing(error: unknown): boolean {
@@ -95,6 +98,8 @@ async function configuration(filename?: string): Promise<Configuration> {
       if (key === 'threshold') {
         if (typeof value !== 'number') throw new Error('Configured threshold must be a number.');
         config.threshold = value;
+      } else if (key === 'highlightColor') {
+        config.highlightColor = parseHighlightColor(value).hex;
       } else if (key === 'include' || key === 'exclude') {
         if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0) || (key === 'include' && value.length === 0)) {
           throw new Error(`${key} must be an array of nonempty glob strings${key === 'include' ? ' with at least one entry' : ''}.`);
@@ -164,7 +169,7 @@ async function manifestPairs(filename: string): Promise<Pair[]> {
 }
 
 export async function selectInputs(positionals: string[], options: {
-  manifest?: string; config?: string; threshold?: number; outputDirectory: string;
+  manifest?: string; config?: string; threshold?: number; highlightColor?: string; outputDirectory: string;
 }): Promise<InputSelection> {
   if (options.manifest && positionals.length) throw new Error('--manifest cannot be combined with image or folder arguments.');
   let mode: 'single' | 'batch' = 'batch';
@@ -187,10 +192,11 @@ export async function selectInputs(positionals: string[], options: {
     try { await stat(candidate); configFile = candidate; } catch (error) { if (!missing(error)) throw error; }
   }
   const config = await configuration(configFile);
+  const highlightColor = parseHighlightColor(options.highlightColor ?? config.highlightColor).hex;
   const threshold = options.threshold ?? config.threshold;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('Threshold must be a finite number between 0 and 1.');
   if (mode === 'single') {
-    return { mode, pairs: [{ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) }], inputRoots: [], threshold };
+    return { mode, pairs: [{ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) }], inputRoots: [], threshold, highlightColor };
   }
   let pairs: Pair[];
   if (options.manifest) pairs = await manifestPairs(options.manifest);
@@ -204,5 +210,5 @@ export async function selectInputs(positionals: string[], options: {
     if (!pairs.length) throw new Error('No PNG/JPEG screenshots matched the configured folders and patterns.');
   }
   pairs.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  return { mode: 'batch', pairs, inputRoots: roots, threshold };
+  return { mode: 'batch', pairs, inputRoots: roots, threshold, highlightColor };
 }

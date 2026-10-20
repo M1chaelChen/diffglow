@@ -1,8 +1,8 @@
 # Diffglow
 
 Compare two screenshots and highlight changes directly over the second image.
-Unchanged areas keep their original colors; changed pixels receive a bright,
-65% magenta overlay. Images stay on your machine.
+Unchanged areas keep their original colors; changed pixels receive a 65% overlay,
+magenta by default. You can choose the highlight color. Images stay on your machine.
 
 ![Before, after, and highlighted screenshot comparison](./docs/demo.png)
 
@@ -69,10 +69,11 @@ remain visible in the verification report.
 | --- | --- |
 | `-o, --output <path>` | Output `.png` path; defaults to `diff.png`. |
 | `--threshold <0..1>` | Per-pixel color tolerance; defaults to `0.1`. Lower is more sensitive. |
+| `--highlight-color <hex>` | Overlay color as `#RGB` or `#RRGGBB`; defaults to magenta (`#ff00ff`). |
 | `--fail-on-diff` | Exit `1` when changes exist, after saving the highlighted PNG. |
 | `--json` | Write detailed comparison statistics as JSON to stdout; still save the PNG. |
 | `--manifest <file>` | Compare explicitly named pairs from a JSON manifest. |
-| `--config <file>` | Load JSON folder names, matching rules, and threshold. |
+| `--config <file>` | Load JSON folder names, matching rules, threshold, and highlight color. |
 | `--output-dir <dir>` | Batch/HTML report directory; defaults to `diffglow-report`. |
 | `--html` | Generate an offline HTML review page and screenshot assets. |
 | `-h, --help` | Show usage. |
@@ -88,6 +89,19 @@ The threshold controls color differences at individual pixels, rather than an
 allowed percentage of changes. Detected anti-aliasing differences are ignored,
 including at threshold `0`, to reduce text-edge noise. Diffglow compares visual
 pixels rather than file bytes. JPEG compression can introduce visual differences.
+
+Choose a highlight color for a single pair, folders, or manifest comparisons:
+
+```bash
+diffglow before.png after.png --highlight-color '#00ff00' -o green-diff.png
+diffglow screenshots/ --highlight-color '#0af' --html
+```
+
+Quote the hex value so your shell preserves `#`. Colors accept three or six hex
+digits, case-insensitively, and are normalized to lowercase `#rrggbb` in JSON.
+Opacity stays at 65%. The color affects highlighted pixels, including added and
+removed areas, and the HTML report legend; it does not affect which pixels count
+as changes or the comparison statistics.
 
 ## Compare folders or multiple files
 
@@ -144,9 +158,10 @@ Do not combine `--manifest` with positional inputs, or mix files and directories
 ### Folder configuration and filename patterns
 
 A single folder input automatically loads its `diffglow.config.json`, if present.
-Use `--config path/to/config.json` to select another configuration or apply rules
-to two explicit directories. Relative folder settings resolve within the single
-input folder; two explicit directories take precedence over configured names.
+Use `--config path/to/config.json` to select another configuration or apply settings
+to explicit files, directories, or a manifest. Relative folder settings resolve
+within the single input folder; two explicit directories take precedence over
+configured names.
 Unknown settings and invalid patterns are rejected before comparisons start.
 
 ```json
@@ -157,12 +172,14 @@ Unknown settings and invalid patterns are rejected before comparisons start.
   "exclude": ["drafts/**", "**/debug-?.png"],
   "baselinePattern": "{key}",
   "currentPattern": "{key}",
-  "threshold": 0.1
+  "threshold": 0.1,
+  "highlightColor": "#ff00ff"
 }
 ```
 
 Defaults are `baselineDir: "baseline"`, `currentDir: "current"`, and the other
-values above with an empty exclusion list. CLI `--threshold` overrides the config.
+values above with an empty exclusion list. CLI `--threshold` and
+`--highlight-color` override their respective config settings.
 Explicit manifest pairs are not filtered or renamed by folder matching rules.
 
 Globs use forward slashes: `*` matches within a path segment, `**` matches complete
@@ -197,6 +214,7 @@ summary counts/pixel totals, per-file results, and the final exit code. Successf
 entries reuse the single-pair statistics and include an `id` and relative
 `artifacts` paths. Added/removed entries have a null missing input; failed entries
 contain an error message and null artifacts. Results are sorted by identity.
+The root `rendering` object records the selected highlight color and opacity.
 
 Aggregate changed percentage is the sum of changed pixels divided by the sum of
 compared pixels, not the average of individual percentages. Failed entries are
@@ -246,7 +264,7 @@ report directory even when comparison exits with differences or per-file errors.
 - Images align at the top-left without resizing. Output dimensions use the larger
   width and height of the two inputs.
 - Added and removed areas always count as changes, regardless of threshold.
-  Removed content from the first screenshot remains visible under the magenta tint.
+  Removed content from the first screenshot remains visible under the highlight tint.
 - The changed percentage is changed pixels divided by the union of both image
   areas. Parts of the output canvas covered by neither input stay transparent and
   are excluded from that percentage.
@@ -285,6 +303,7 @@ A comparison with a changed rectangle might report:
     "alignment": "top-left",
     "dimensionsChanged": false
   },
+  "rendering": { "highlightColor": "#ff00ff", "highlightOpacity": 0.65 },
   "stats": {
     "comparedPixels": 10000,
     "changedPixels": 300,
@@ -300,6 +319,8 @@ A comparison with a changed rectangle might report:
 ```
 
 Paths are absolute and dimensions reflect normalized image orientation.
+The additive `rendering` object records the normalized overlay settings in
+single-pair and batch reports; the JSON schema version remains `1`.
 `modifiedPixels` counts changed pixels within the overlapping image area;
 `addedPixels` and `removedPixels` count areas covered by only the corresponding
 input. These describe image footprints rather than classifying UI elements.
@@ -349,7 +370,7 @@ the comparison:
 
 ```yaml
 - name: Compare screenshots
-  run: npx --yes diffglow@0.1.0-alpha.4 before.png after.png --output artifacts/diff.png --fail-on-diff
+  run: npx --yes diffglow@0.1.0-alpha.5 before.png after.png --output artifacts/diff.png --fail-on-diff
 
 - name: Upload highlighted comparison
   if: always()

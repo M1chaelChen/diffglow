@@ -6,6 +6,7 @@ import { canonicalPath, contains, type InputSelection } from './discovery.js';
 import { prepareReport } from './output.js';
 import { comparisonReport, errorReport } from './report.js';
 import { htmlReport } from './html.js';
+import { HIGHLIGHT_OPACITY } from './color.js';
 
 export interface Artifacts { baseline: string | null; current: string | null; diff: string }
 export type SuccessEntry = ReturnType<typeof comparisonReport> & { id: string; artifacts: Artifacts };
@@ -21,6 +22,7 @@ export interface RunReport {
   outputDirectory: string;
   htmlReportPath: string | null;
   comparison: { threshold: number; includeAntiAliasing: false; alignment: 'top-left' };
+  rendering: { highlightColor: string; highlightOpacity: number };
   summary: {
     total: number; compared: number; different: number; identical: number; added: number; removed: number; errors: number;
     comparedPixels: number; changedPixels: number; unchangedPixels: number; modifiedPixels: number; addedPixels: number; removedPixels: number; changedPercentage: number;
@@ -63,7 +65,7 @@ export async function runComparisons(selection: InputSelection, options: {
             path.join(directory.staging, path.relative(directory.directory, canonicalOutput)) : reportedOutput;
         }
         const result = await comparePair(pair.before, pair.after, {
-          output, threshold: selection.threshold,
+          output, threshold: selection.threshold, highlightColor: selection.highlightColor,
           ...(options.html ? { previews: { baseline: path.join(stagedAssets, 'baseline.png'), current: path.join(stagedAssets, 'current.png') } } : {})
         });
         if (output !== stagedDiff) await copyFile(output, stagedDiff);
@@ -95,6 +97,7 @@ export async function runComparisons(selection: InputSelection, options: {
       outputDirectory: directory.directory,
       htmlReportPath: options.html ? path.join(directory.directory, 'index.html') : null,
       comparison: { threshold: selection.threshold, includeAntiAliasing: false, alignment: 'top-left' },
+      rendering: { highlightColor: selection.highlightColor, highlightOpacity: HIGHLIGHT_OPACITY },
       summary, results,
       exitCode: summary.errors ? 2 : options.failOnDiff && hasChanges ? 1 : 0
     };
