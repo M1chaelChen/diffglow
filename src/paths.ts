@@ -1,5 +1,4 @@
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 const windowsPath = (value: string): boolean => /^(?:[a-z]:|\\\\|\/\/)/i.test(value);
@@ -74,7 +73,9 @@ export function relativeError(message: string, knownPaths: Iterable<string> = []
   if (process.platform === 'win32' || !windowsPath(base)) {
     try { register(realpathSync.native(base), '.'); } catch { /* A supplied presentation base can be nonexistent. */ }
   }
-  register(homedir(), '[home]');
+  // Leave unknown paths under the home directory absolute until the fail-closed
+  // scan below. Shortening only their prefix would expose private path tails
+  // (Windows temporary files commonly live under the user's home directory).
   let result = message;
   for (const [alias, label] of [...aliases].sort((a, b) => b[0].length - a[0].length)) {
     result = replaceAlias(result, alias, label);

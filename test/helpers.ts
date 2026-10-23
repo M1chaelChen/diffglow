@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
@@ -6,7 +6,7 @@ import sharp from 'sharp';
 
 export async function workspace(t: TestContext): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), 'screenshot diff-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   return directory;
 }
 
@@ -23,7 +23,8 @@ export async function image(filename: string, width: number, height: number, dat
 }
 
 export async function readPixels(filename: string): Promise<Buffer> {
-  return sharp(filename).ensureAlpha().raw().toBuffer();
+  // Buffer input prevents libvips from caching open WebP files during Windows cleanup.
+  return sharp(await readFile(filename)).ensureAlpha().raw().toBuffer();
 }
 
 export function pixel(data: Buffer, width: number, x: number, y: number): number[] {

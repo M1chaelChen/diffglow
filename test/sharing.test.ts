@@ -29,9 +29,9 @@ function json<T = RunReport>(cwd: string, args: string[], expected = 0): T {
   assert.equal(result.stdout, JSON.stringify(report, null, 2) + '\n');
   return report;
 }
-function privatePathsAbsent(text: string, privateRoot: string) {
-  assert.ok(!text.includes(privateRoot), 'Report must not contain the absolute private source root.');
-  assert.ok(!text.includes(privateName), 'Report must not contain the source owner directory name.');
+function privatePathsAbsent(text: string, privateRoot: string, context = 'report') {
+  assert.ok(!text.includes(privateRoot), `Report must not contain the absolute private source root: ${context}`);
+  assert.ok(!text.includes(privateName), `Report must not contain the source owner directory name: ${context}`);
 }
 async function fixture(t: Parameters<typeof workspace>[0]) {
   const directory = await realpath(await workspace(t));
@@ -176,8 +176,9 @@ test('--relative sanitizes invalid options and input, JSON, folder, and output e
   ];
   for (const { args, message } of cases) {
     const result = run(cwd, [...args, '--relative', '--json'], 2);
-    assert.equal(result.stderr, ''); privatePathsAbsent(result.stdout, sources);
+    assert.equal(result.stderr, '');
     const report = JSON.parse(result.stdout) as ReturnType<typeof errorReport>;
+    privatePathsAbsent(result.stdout, sources, `Error case ${message.source}: ${report.error.message}`);
     assert.equal(report.status, 'error'); assert.equal(report.exitCode, 2); assert.match(report.error.message, message);
   }
   const text = run(cwd, [bad, after, '--relative'], 2);
@@ -231,7 +232,7 @@ test('compact PNG and WebP reports shrink actual assets without changing full-re
       assert.ok('reportImages' in entry, 'Per-pair metadata must distinguish rendered asset dimensions from comparison dimensions.');
       for (const filename of Object.values(entry.artifacts)) if (filename) {
         assert.equal(path.extname(filename), `.${imageFormat}`);
-        const metadata = await sharp(path.join(output, filename)).metadata();
+        const metadata = await sharp(await readFile(path.join(output, filename))).metadata();
         assert.equal(metadata.format, imageFormat); assert.equal(metadata.width, 32); assert.equal(metadata.height, 64);
       }
     }
@@ -242,7 +243,7 @@ test('compact PNG and WebP reports shrink actual assets without changing full-re
   const single = json<ReturnType<typeof comparisonReport>>(cwd, [before, after, '--html', '--relative', '--output', standalone,
     '--output-dir', path.join(cwd, 'single report'), '--max-height', '64', '--image-format', 'webp', '--fail-on-diff'], 1);
   assert.deepEqual(single.stats, full.results[0].status === 'error' ? null : full.results[0].stats);
-  const fullMetadata = await sharp(standalone).metadata();
+  const fullMetadata = await sharp(await readFile(standalone)).metadata();
   assert.deepEqual([fullMetadata.format, fullMetadata.width, fullMetadata.height], ['png', width, height]);
 });
 
@@ -258,7 +259,7 @@ test('compact report images never enlarge tiny screenshots and preserve missing-
     const present = entry.before ?? entry.after!;
     assert.equal(entry.status === 'added' ? entry.artifacts.baseline : entry.artifacts.current, null);
     for (const filename of Object.values(entry.artifacts)) if (filename) {
-      const metadata = await sharp(path.join(output, filename)).metadata();
+      const metadata = await sharp(await readFile(path.join(output, filename))).metadata();
       assert.deepEqual([metadata.width, metadata.height], [present.width, present.height]);
       assert.equal(metadata.format, 'webp');
     }

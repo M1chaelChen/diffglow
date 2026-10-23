@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { portablePath, relativeError } from '../src/paths.js';
@@ -79,6 +80,19 @@ test('unregistered native paths fail closed without repeating usernames, path ta
     assert.doesNotMatch(sanitized, /private-user|PrivateUser|private-share|diffglow-stage|Users|C:|file:\/\/|\.\.[\\/]/);
     if (original.includes('ENOENT')) assert.match(sanitized, /ENOENT/);
   }
+});
+
+test('unregistered temporary paths under home fail closed after known output paths are shortened', () => {
+  // Windows keeps its native temporary directory under home. Use the actual
+  // host home so this privacy regression also runs on Linux and macOS.
+  const privateRoot = path.join(homedir(), 'AppData', 'Local', 'Temp', 'PRIVATE_REPORT_OWNER_8675309', 'screenshots with spaces');
+  const output = path.join(privateRoot, 'output.png');
+  const temporary = path.join(privateRoot, '.diffglow-private-stage.tmp');
+  const base = path.join(path.parse(homedir()).root, 'consumer');
+  const original = `Cannot write output "${output}": EPERM: operation not permitted, rename '${temporary}' -> '${output}'`;
+  const sanitized = relativeError(original, [output], base);
+  assert.equal(sanitized, 'Cannot write output "output.png": EPERM: operation not permitted, rename [local path].');
+  assert.doesNotMatch(sanitized, /PRIVATE_REPORT_OWNER|AppData|diffglow-private-stage|\[home\]/);
 });
 
 test('safe diagnostics, URLs, portable labels, and similarly named files remain intact', () => {

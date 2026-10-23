@@ -34,7 +34,7 @@ test('max height preserves aspect ratio, never enlarges, and reports encoded dim
   const resized = path.join(directory, 'resized.png');
   const options = normalizeReportImages({ maxHeight: 20 });
   assert.deepEqual(await renderReportImage(source, resized, options), { width: 9, height: 20 });
-  const metadata = await sharp(resized).metadata();
+  const metadata = await sharp(await readFile(resized)).metadata();
   assert.equal(metadata.width, 9); assert.equal(metadata.height, 20);
   assert.equal(metadata.format, 'png');
   assert.deepEqual(await readFile(source), original);
@@ -85,7 +85,8 @@ test('same-path conversion safely replaces only the completed encoded image and 
     const source = path.join(directory, `report-${imageFormat}.png`);
     await image(source, 14, 10, pixels(14, 10, [0, 145, 210, 128]));
     assert.deepEqual(await renderReportImage(source, source, normalizeReportImages({ maxHeight: 5, imageFormat })), { width: 7, height: 5 });
-    const metadata = await sharp(source).metadata();
+    // Buffer reads avoid retaining native WebP file handles during Windows cleanup.
+    const metadata = await sharp(await readFile(source)).metadata();
     assert.equal(metadata.format, imageFormat); assert.equal(metadata.width, 7); assert.equal(metadata.height, 5);
   }
   assert.deepEqual(await readdir(directory), ['report-png.png', 'report-webp.png']);
@@ -104,7 +105,7 @@ test('oversized WebP reports fail clearly before overwriting any image and can b
   await assert.rejects(renderReportImage(source, destination, options), /WebP.*16383.*--max-height/);
   assert.equal(await readFile(destination, 'utf8'), 'keep this destination');
   assert.deepEqual(await renderReportImage(source, destination, normalizeReportImages({ maxHeight: 2, imageFormat: 'webp' })), { width: 8192, height: 2 });
-  assert.equal((await sharp(destination).metadata()).format, 'webp');
+  assert.equal((await sharp(await readFile(destination)).metadata()).format, 'webp');
   assert.deepEqual(await readdir(directory), ['existing.webp', 'wide.png']);
 });
 
