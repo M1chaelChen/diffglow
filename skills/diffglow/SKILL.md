@@ -49,6 +49,15 @@ fails. Use a distinct report directory per run and keep verification plans and
 agent reports outside the generated directory: rerunning replaces that directory.
 Keep generated captures out of source control unless project policy says otherwise.
 
+For reports that will be shared, add `--relative` to omit local absolute paths.
+Use `--max-height 1200 --image-format webp` to reduce bundled report assets;
+WebP is lossless, and the height limit preserves aspect ratio without enlarging
+images. These settings leave comparison pixels and statistics at full resolution.
+Keep the original captures for fine visual assessment: a reduced report image
+cannot establish that small text or layout details are correct. Review screenshot
+contents and user-supplied comparison IDs before sharing; path presentation does
+not remove private content from either.
+
 For known dynamic areas such as a mobile status-bar clock, use a narrow rectangle
 in normalized screenshot pixels:
 
@@ -62,17 +71,40 @@ Coordinates start at the top-left after orientation normalization, using actual
 image pixels rather than CSS/device-independent coordinates. Positions must be
 nonnegative integers and dimensions positive integers, with safe integer sums.
 Rectangles clip to image coverage and overlapping pixels count once. CLI regions
-replace the configured array; all configured values must still be valid.
+replace the configured global `ignoreRegions` array; all configured values must
+still be valid.
 
-The same regions apply to every pair in the run; use separate runs for different
-geometries. Diffglow does not detect clocks automatically or provide per-pair
-region overrides. Record the regions with the evidence and inspect that they
-do not hide relevant UI. Ignored pixels retain current-image appearance, are not
-highlighted, and are excluded from changed/unchanged/compared counts and bounds.
-JSON records `comparison.ignoreRegions`, `stats.ignoredPixels`, and batch
-`summary.ignoredPixels`; HTML displays the exclusions. If no pixels remain, the
-percentage is `0` and `--fail-on-diff` exits `0`, but the visual check is
-inconclusive. Added/removed file statuses still describe coverage and require
+For different screenshot geometries, configure `ignoreRegionsById` glob rules or
+add `ignoreRegions` to individual manifest pairs. Effective masks combine the
+selected global array, every matching ID rule, and the pair's manifest regions.
+CLI global replacements do not remove ID rules or pair regions. ID rules match
+the comparison identity: the relative filename, a configured pairing key, or the
+explicit manifest ID. For example:
+
+```json
+{
+  "ignoreRegionsById": {
+    "catalog/*.png": [{ "x": 720, "y": 340, "width": 180, "height": 48 }],
+    "checkout-ready/ios/**": [{ "x": 0, "y": 0, "width": 160, "height": 60 }]
+  }
+}
+```
+
+Load these rules with `--config path/to/diffglow.config.json`, or use the single
+input folder's automatically loaded `diffglow.config.json`. Diffglow does not
+detect clocks automatically or resolve element selectors from screenshot pixels.
+The existing capture tool can measure an element's rectangle and supply its
+coordinates as a manifest mask.
+
+Record the regions with the evidence and inspect that they do not hide relevant
+UI. Masks change comparison only, **not screenshot redaction**: original values
+remain visible in report previews. Ignored pixels retain current-image appearance,
+are not highlighted, and are excluded from changed/unchanged/compared counts and
+bounds. Each result records its effective `comparison.ignoreRegions` and
+`stats.ignoredPixels`; batch `comparison.ignoreRegions` contains the global array,
+and `summary.ignoredPixels` totals ignored pixels. HTML displays the exclusions.
+If no pixels remain, the percentage is `0` and `--fail-on-diff` exits `0`, but the
+visual check is inconclusive. Added/removed file statuses still describe coverage and require
 interpretation even when all of their pixels are ignored.
 
 Exit `0` means the comparison completed, even if images differ. With

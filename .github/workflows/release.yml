@@ -1,4 +1,4 @@
-name: Release alpha
+name: Release
 
 on:
   workflow_dispatch:
@@ -8,12 +8,12 @@ on:
         required: true
         type: string
       expected_version:
-        description: Reviewed alpha version from package.json
+        description: Reviewed stable or alpha version from package.json
         required: true
-        default: 0.1.0-alpha.5
+        default: 0.1.0
         type: string
       publish_to_npm:
-        description: Publish after GitHub environment approval, then verify npm and create the prerelease; false only checks
+        description: Publish after GitHub environment approval, then verify npm and create the GitHub release; false only checks
         required: true
         default: false
         type: boolean
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: diffglow-npm-alpha
+  group: diffglow-npm-publish
   cancel-in-progress: false
 
 jobs:
@@ -49,6 +49,7 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
+          import { releaseChannel } from './scripts/release-utils.mjs';
           const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
           const { EXPECTED_SHA: sha, EXPECTED_VERSION: version } = process.env;
           if (process.env.GITHUB_REPOSITORY !== 'M1chaelChen/diffglow' || event.repository.fork) {
@@ -64,12 +65,10 @@ jobs:
           if (!/^[a-f0-9]{40}$/.test(sha ?? '') || sha !== process.env.GITHUB_SHA) {
             throw new Error('expected_sha must be the full reviewed main HEAD selected for this dispatch.');
           }
-          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-alpha\.(0|[1-9]\d*)$/.test(version ?? '')) {
-            throw new Error('Only explicit alpha versions such as 0.1.0-alpha.3 can be released.');
-          }
+          const channel = releaseChannel(version);
           const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          if (pkg.name !== 'diffglow' || pkg.version !== version || pkg.private === true) {
-            throw new Error('package.json must describe the reviewed public diffglow alpha version.');
+          if (pkg.name !== 'diffglow' || pkg.version !== version || pkg.private === true || pkg.publishConfig?.tag !== channel) {
+            throw new Error('package.json must describe the reviewed public diffglow version and its matching npm channel.');
           }
           appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\nversion=${version}\n`);
           NODE
@@ -141,7 +140,7 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Approve and publish npm alpha
+    name: Approve and publish npm package
     if: inputs.publish_to_npm
     needs: [validate, prepare, verify]
     runs-on: ubuntu-latest
@@ -206,7 +205,7 @@ jobs:
           if-no-files-found: error
 
   github:
-    name: Create verified GitHub prerelease
+    name: Create verified GitHub release
     if: inputs.publish_to_npm
     needs: [validate, registry]
     runs-on: ubuntu-latest

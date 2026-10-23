@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { digest, readCandidate, registryJSON, releaseContext, repository, assertPublished } from './release-utils.mjs';
+import { digest, readCandidate, registryJSON, releaseContext, releaseChannel, repository, assertPublished } from './release-utils.mjs';
 
 export async function resolveTag(tag, request) {
   let ref = await request(`/git/ref/tags/${encodeURIComponent(tag)}`, { missing: true });
@@ -19,12 +19,21 @@ export function assertTag(tagSha, expectedSha) {
 export function assertAsset(asset, sha256) {
   assert.equal(asset.digest, `sha256:${sha256}`, `Existing release asset ${asset.name} differs; refusing to overwrite it.`);
 }
+export function githubReleaseOptions(version) {
+  const prerelease = releaseChannel(version) === 'alpha';
+  return { draft: false, prerelease, make_latest: prerelease ? 'false' : 'true' };
+}
+export function assertRelease(release, version) {
+  assert.equal(release.tag_name, `v${version}`);
+  assert.equal(release.prerelease, githubReleaseOptions(version).prerelease, 'Existing release has a different prerelease status; refusing to change it.');
+  assert.equal(release.draft, false, 'Existing release is a draft; refusing to publish it implicitly.');
+}
 
 export async function main() {
   const context = releaseContext();
   const candidate = await readCandidate(context);
   assertPublished(await registryJSON(`/${encodeURIComponent(context.version)}`), context.version, candidate.integrity);
-  const tags = await registryJSON('/dist-tags'); assert.equal(tags?.alpha, context.version);
+  const tags = await registryJSON('/dist-tags'); assert.equal(tags?.[releaseChannel(context.version)], context.version);
   assert.ok(process.env.GH_TOKEN, 'The GitHub release job requires its scoped GitHub token.');
   async function request(route, { method = 'GET', body, missing = false } = {}) {
     const response = await fetch(`https://api.github.com/repos/${repository}${route}`, {
@@ -48,10 +57,10 @@ export async function main() {
     release = await request('/releases', { method: 'POST', body: {
       tag_name: tag, target_commitish: context.sha, name: `Diffglow ${context.version}`,
       body: `${notes}\n\nInstall: \`npx --yes diffglow@${context.version} --help\`\n\nVerified on Linux, macOS, and Windows with Node.js 22 and 24.`,
-      draft: false, prerelease: true, make_latest: 'false'
+      ...githubReleaseOptions(context.version)
     } });
   }
-  assert.equal(release.tag_name, tag); assert.equal(release.prerelease, true); assert.equal(release.draft, false);
+  assertRelease(release, context.version);
   assert.equal(await resolveTag(tag, request), context.sha, 'Published release tag differs from the verified source.');
   const publicDirectory = path.join(context.directory, 'public-release');
   await mkdir(publicDirectory, { recursive: true });
@@ -73,8 +82,9 @@ export async function main() {
     const created = release.assets.find(asset => asset.name === name);
     assert.ok(created, 'Uploaded release asset was not returned by GitHub.'); assertAsset(created, expected);
   }
-  console.log(`GitHub prerelease verified: ${release.html_url}`);
+  const label = githubReleaseOptions(context.version).prerelease ? 'prerelease' : 'release';
+  console.log(`GitHub ${label} verified: ${release.html_url}`);
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `### GitHub prerelease\n\n[Diffglow ${context.version}](${release.html_url})\n\nSource commit: \`${context.sha}\`\n\nTag and release asset digests verified.\n`);
+    `### GitHub ${label}\n\n[Diffglow ${context.version}](${release.html_url})\n\nSource commit: \`${context.sha}\`\n\nTag and release asset digests verified.\n`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main();

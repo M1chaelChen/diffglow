@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 // @ts-expect-error Internal release scripts deliberately have no published TypeScript API.
-import { alphaParts, compareAlphas, releaseContext, readCandidate, registryJSON, assertPublished, publishDecision, waitForPublication } from '../scripts/release-utils.mjs';
+import { alphaParts, compareAlphas, versionParts, releaseChannel, compareVersions, releaseContext, readCandidate, registryJSON, assertPublished, publishDecision, waitForPublication } from '../scripts/release-utils.mjs';
 // @ts-expect-error Internal release scripts deliberately have no published TypeScript API.
-import { resolveTag, assertTag, assertAsset } from '../scripts/github-release.mjs';
+import { resolveTag, assertTag, assertAsset, githubReleaseOptions, assertRelease } from '../scripts/github-release.mjs';
 
 const version = '0.1.0-alpha.3';
 const sha = '0123456789abcdef0123456789abcdef01234567';
@@ -24,17 +24,17 @@ function environment() {
   };
 }
 
-async function candidate(t: TestContext) {
+async function candidate(t: TestContext, candidateVersion = version) {
   const directory = await mkdtemp(path.join(tmpdir(), 'diffglow release candidate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const filename = `diffglow-${version}.tgz`;
+  const filename = `diffglow-${candidateVersion}.tgz`;
   await writeFile(path.join(directory, filename), bytes);
   await writeFile(path.join(directory, 'SHA256SUMS'), `${sha256}  ${filename}\n`);
   await writeFile(path.join(directory, 'package-report.json'), JSON.stringify({ status: 'passed', sha256 }));
   await writeFile(path.join(directory, 'release-manifest.json'), JSON.stringify({
-    package: `diffglow@${version}`, sourceCommit: sha, sourceHasUncommittedChanges: false, status: 'passed-local-checks'
+    package: `diffglow@${candidateVersion}`, sourceCommit: sha, sourceHasUncommittedChanges: false, status: 'passed-local-checks'
   }));
-  return { directory, version, sha };
+  return { directory, version: candidateVersion, sha };
 }
 
 async function changeJSON(directory: string, filename: string, changes: Record<string, unknown>) {
@@ -59,12 +59,28 @@ test('release context binds the requested commit to main and the exact repositor
   const directory = path.join(tmpdir(), 'reviewed release with spaces');
   assert.deepEqual(releaseContext({ ...environment(), RELEASE_DIRECTORY: directory }), { version, sha, directory: path.resolve(directory) });
   for (const changes of [
-    { EXPECTED_VERSION: '0.1.0' }, { EXPECTED_SHA: 'not-a-commit' },
+    { EXPECTED_VERSION: '0.1.0-beta.1' }, { EXPECTED_SHA: 'not-a-commit' },
     { GITHUB_REPOSITORY: 'somebody/diffglow' }, { GITHUB_REF: 'refs/heads/feature' },
     { GITHUB_SHA: 'f'.repeat(40) },
     { GITHUB_WORKFLOW_REF: 'M1chaelChen/diffglow/.github/workflows/other.yml@refs/heads/main' },
     { GITHUB_WORKFLOW_REF: 'M1chaelChen/diffglow/.github/workflows/release.yml@refs/heads/feature' }
   ]) assert.throws(() => releaseContext({ ...environment(), ...changes }));
+});
+
+test('stable versions use latest while alpha versions keep their separate channel', () => {
+  assert.deepEqual(versionParts('0.1.0'), { numbers: [0n, 1n, 0n], alpha: null });
+  assert.deepEqual(versionParts(version), { numbers: [0n, 1n, 0n], alpha: 3n });
+  assert.equal(releaseChannel('0.1.0'), 'latest');
+  assert.equal(releaseChannel(version), 'alpha');
+  assert.equal(releaseContext({ ...environment(), EXPECTED_VERSION: '0.1.0' }).version, '0.1.0');
+  for (const invalid of ['', 'latest', 'alpha', 'v0.1.0', '0.1', '01.1.0', '0.1.00', '0.1.0+build', '0.1.0-beta.1', '0.1.0-alpha.01']) {
+    assert.throws(() => releaseChannel(invalid), /explicit.*version/);
+  }
+  assert.equal(compareVersions('0.1.0', '0.1.0-alpha.999'), 1);
+  assert.equal(compareVersions('0.1.0-alpha.999', '0.1.0'), -1);
+  assert.equal(compareVersions('0.2.0-alpha.1', '0.1.99'), 1);
+  assert.equal(compareVersions('0.1.0', '0.1.0'), 0);
+  assert.equal(compareVersions('9007199254740993.0.0', '9007199254740992.999.999'), 1);
 });
 
 test('a candidate yields exactly the reviewed bytes, SHA-256, and registry SHA-512 integrity', async t => {
@@ -73,6 +89,16 @@ test('a candidate yields exactly the reviewed bytes, SHA-256, and registry SHA-5
   assert.deepEqual(result, {
     filename: `diffglow-${version}.tgz`, tarball: path.join(context.directory, `diffglow-${version}.tgz`), bytes, sha256, integrity
   });
+});
+
+test('stable candidates preserve the same immutable package and source guards', async t => {
+  const context = await candidate(t, '0.1.0');
+  const result = await readCandidate(context);
+  assert.equal(result.filename, 'diffglow-0.1.0.tgz');
+  assert.equal(result.sha256, sha256);
+  assert.equal(result.integrity, integrity);
+  await changeJSON(context.directory, 'release-manifest.json', { sourceCommit: 'f'.repeat(40) });
+  await assert.rejects(readCandidate(context));
 });
 
 test('candidate verification rejects modified bytes, checksums, reports, and source manifests', async t => {
@@ -114,6 +140,23 @@ test('a new version advances alpha and refuses rollback or an ambiguous channel'
     assert.throws(() => publishDecision(null, { alpha }, version, integrity), /older alpha|backward/);
   }
   assert.throws(() => publishDecision(null, { alpha: '0.1.0' }, version, integrity), /explicit.*alpha/);
+});
+
+test('stable publication promotes latest once and retries only matching bytes and channel', () => {
+  const stable = '0.1.0';
+  const stablePublished = { ...published, version: stable };
+  assert.equal(publishDecision(null, {}, stable, integrity), true);
+  assert.equal(publishDecision(null, { latest: '0.1.0-alpha.5', alpha: '0.1.0-alpha.5' }, stable, integrity), true);
+  assert.equal(publishDecision(null, { latest: '0.0.9' }, stable, integrity), true);
+  assert.equal(publishDecision(stablePublished, { latest: stable, alpha: version }, stable, integrity), false);
+  for (const latest of [stable, '0.1.1', '0.2.0-alpha.1']) {
+    assert.throws(() => publishDecision(null, { latest }, stable, integrity), /older latest|backward/);
+  }
+  assert.throws(() => publishDecision(null, { latest: 'unknown-channel' }, stable, integrity), /explicit.*version/);
+  assert.throws(() => publishDecision(stablePublished, { latest: '0.0.9' }, stable, integrity), /latest points elsewhere/);
+  assert.throws(() => publishDecision({ ...stablePublished, dist: { integrity: 'sha512-different' } }, { latest: stable }, stable, integrity), /different bytes/);
+  // An unrelated channel never authorizes a retry or moves that channel implicitly.
+  assert.throws(() => publishDecision(stablePublished, { alpha: stable }, stable, integrity), /latest points elsewhere/);
 });
 
 test('registry reads retry network failures, throttling, and server errors with bounded backoff', async () => {
@@ -198,6 +241,28 @@ test('publication waits until both immutable bytes and the alpha channel are vis
   assert.deepEqual(result, published); assert.equal(answers.length, 0);
   assert.deepEqual(suffixes, [`/${version}`, '/dist-tags', `/${version}`, '/dist-tags', `/${version}`, '/dist-tags']);
   assert.deepEqual(waits, [2000, 4000]);
+});
+
+test('stable publication waits for latest propagation without depending on the alpha tag', async () => {
+  const stable = '0.1.0';
+  const stablePublished = { ...published, version: stable };
+  const answers = [null, { latest: version, alpha: version }, stablePublished, { latest: version }, stablePublished, { latest: stable }];
+  const waits: number[] = [];
+  const result = await waitForPublication(stable, integrity, {
+    get: async () => answers.shift(), attempts: 3,
+    wait: async (milliseconds: number) => { waits.push(milliseconds); }
+  });
+  assert.deepEqual(result, stablePublished);
+  assert.equal(answers.length, 0);
+  assert.deepEqual(waits, [2000, 4000]);
+  await assert.rejects(waitForPublication(stable, integrity, {
+    get: async (suffix: string) => suffix === '/dist-tags' ? { latest: '0.1.1' } : stablePublished,
+    wait: async () => assert.fail('newer stable must not retry')
+  }), /newer latest/);
+  await assert.rejects(waitForPublication(stable, integrity, {
+    get: async (suffix: string) => suffix === '/dist-tags' ? { alpha: stable } : stablePublished,
+    wait: async () => {}, attempts: 1
+  }), /matching integrity and latest tag/);
 });
 
 test('publication survives several minutes of npm processing and waits for the alpha tag to catch up', async () => {
@@ -306,4 +371,16 @@ test('GitHub release retries reuse matching assets and reject unknown or differe
   assert.doesNotThrow(() => assertAsset({ name: 'package.tgz', digest: `sha256:${sha256}` }, sha256));
   assert.throws(() => assertAsset({ name: 'package.tgz', digest: `sha256:${'0'.repeat(64)}` }, sha256), /refusing to overwrite/);
   assert.throws(() => assertAsset({ name: 'package.tgz' }, sha256), /refusing to overwrite/);
+});
+
+test('GitHub stable releases become latest and alpha releases remain prereleases on retries', () => {
+  assert.deepEqual(githubReleaseOptions('0.1.0'), { draft: false, prerelease: false, make_latest: 'true' });
+  assert.deepEqual(githubReleaseOptions(version), { draft: false, prerelease: true, make_latest: 'false' });
+  for (const released of ['0.1.0', version]) {
+    const release = { tag_name: `v${released}`, prerelease: releaseChannel(released) === 'alpha', draft: false };
+    assert.doesNotThrow(() => assertRelease(release, released));
+    assert.throws(() => assertRelease({ ...release, prerelease: !release.prerelease }, released), /different prerelease status/);
+    assert.throws(() => assertRelease({ ...release, draft: true }, released), /draft/);
+    assert.throws(() => assertRelease({ ...release, tag_name: 'v0.0.1' }, released));
+  }
 });

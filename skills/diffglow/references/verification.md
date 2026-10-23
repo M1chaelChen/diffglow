@@ -64,6 +64,14 @@ If noise is suspected, a bounded repeat of the same code/environment can help
 identify unstable captures. Preserve the disagreement instead of retrying until
 a favorable image appears or automatically increasing the threshold.
 
+Record effective per-pair masks as comparison settings, including matching
+`ignoreRegionsById` rules and manifest regions. Masked content remains visible in
+images and cannot support a pixel-comparison conclusion about that area. Portable
+paths (`--relative`) and smaller report assets (`--max-height`, lossless WebP) help
+sharing, but do not redact captures. Retain full-resolution originals and inspect
+them when reduced previews cannot resolve a required detail; unchanged statistics
+do not give a thumbnail the evidentiary detail of the original image.
+
 ## Report evidence and uncertainty separately
 
 An illustrative report structure:

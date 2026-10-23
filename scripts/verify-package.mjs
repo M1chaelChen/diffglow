@@ -131,7 +131,7 @@ try {
       assert.match(filename, allowed, `Unintended packed file: ${filename}`);
       inspectText(filename, content);
     }
-    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/color.js', 'dist/regions.js', 'dist/diff.js', 'dist/report.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
+    for (const required of ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'dist/cli.js', 'dist/color.js', 'dist/regions.js', 'dist/diff.js', 'dist/report.js', 'dist/paths.js', 'dist/report-images.js', 'dist/discovery.js', 'dist/output.js', 'dist/batch.js', 'dist/html.js', 'docs/demo.png', 'skills/diffglow/SKILL.md', 'skills/diffglow/agents/openai.yaml', 'skills/diffglow/references/playwright.md', 'skills/diffglow/references/maestro.md', 'skills/diffglow/references/verification.md']) {
       assert.ok(files.has(required), `Missing packed release file: ${required}`);
     }
     for (const [filename, content] of files) {
@@ -207,6 +207,22 @@ try {
     assert.equal(payload.exitCode, expected);
     return payload;
   }
+  function assertPortablePaths(value, key = '') {
+    if (typeof value === 'string') {
+      const normalized = value.replaceAll('\\', '/');
+      assert.ok(!normalized.includes(consumer.replaceAll('\\', '/')), 'Shareable reports must omit the absolute consumer path.');
+      assert.ok(!normalized.includes(inputDir.replaceAll('\\', '/')), 'Shareable reports must omit the absolute input directory.');
+      assert.doesNotMatch(normalized, /(?:\/Users\/|\/home\/|[A-Za-z]:\/Users\/)/, 'Shareable reports must omit local home directories.');
+      if (['path', 'outputDirectory', 'htmlReportPath', 'before', 'after', 'baseline', 'current', 'diff'].includes(key)) {
+        assert.ok(!path.posix.isAbsolute(normalized) && !path.win32.isAbsolute(normalized), `Expected a portable ${key}: ${value}`);
+        assert.ok(!normalized.split('/').includes('..'), `Expected a portable ${key} without parent traversal: ${value}`);
+      }
+    } else if (Array.isArray(value)) {
+      for (const item of value) assertPortablePaths(item);
+    } else if (value && typeof value === 'object') {
+      for (const [field, item] of Object.entries(value)) assertPortablePaths(item, field);
+    }
+  }
   const pixels = (width, height, color = [255, 255, 255, 255]) => {
     const data = Buffer.alloc(width * height * 4);
     for (let i = 0; i < data.length; i += 4) data.set(color, i);
@@ -226,6 +242,9 @@ try {
     const help = run(['--help']).stdout;
     assert.match(help, /Usage: diffglow/);
     assert.match(help, /--ignore-region/);
+    assert.match(help, /--relative/);
+    assert.match(help, /--max-height/);
+    assert.match(help, /--image-format/);
     assert.equal(run(['--version']).stdout.trim(), manifest.version);
   });
   await check('identical images and default output preserve all pixels', async () => {
@@ -429,6 +448,125 @@ try {
     const single = runJSON([before, after, '--html', '-o', singleOutput, '--output-dir', path.join(inputDir, 'single report')]);
     assert.equal(single.stats.changedPixels, 4); assert.equal(single.mode, undefined);
     assert.equal((await sharp(singleOutput).metadata()).format, 'png');
+  });
+  await check('installed shareable WebP report keeps original-resolution statistics and the standalone PNG', async () => {
+    const baseline = await image('share before.png', 8, 8);
+    const currentPixels = pixels(8, 8);
+    for (let y = 2; y < 4; y++) for (let x = 2; x < 4; x++) currentPixels.set([0, 100, 200, 255], (y * 8 + x) * 4);
+    const current = await image('share after.png', 8, 8, currentPixels);
+    const originals = [await readFile(baseline), await readFile(current)];
+    const standalone = path.join(inputDir, 'original size share diff.png');
+    const output = path.join(inputDir, 'compact share report');
+    const payload = runJSON([baseline, current, '--relative', '--html', '--output-dir', output,
+      '--output', standalone, '--max-height', '4', '--image-format', 'webp', '--fail-on-diff'], 1);
+    assert.equal(payload.status, 'different');
+    assert.equal(payload.stats.comparedPixels, 64); assert.equal(payload.stats.changedPixels, 4);
+    assert.equal(payload.stats.unchangedPixels, 60); assert.equal(payload.stats.changedPercentage, 6.25);
+    assert.deepEqual(payload.stats.diffBounds, { x: 2, y: 2, width: 2, height: 2 });
+    assert.deepEqual([payload.before.width, payload.before.height, payload.after.width, payload.after.height], [8, 8, 8, 8]);
+    assert.deepEqual([payload.output.width, payload.output.height], [4, 4]);
+    assert.deepEqual(payload.reportImages, {
+      maxHeight: 4, imageFormat: 'webp', dimensions: {
+        baseline: { width: 4, height: 4 }, current: { width: 4, height: 4 }, diff: { width: 4, height: 4 }
+      }
+    });
+    assertPortablePaths(payload);
+    const metadata = await sharp(standalone).metadata();
+    assert.deepEqual([metadata.format, metadata.width, metadata.height], ['png', 8, 8]);
+    const highlighted = await readPixels(standalone);
+    assert.deepEqual([...highlighted.subarray((2 * 8 + 2) * 4, (2 * 8 + 2) * 4 + 4)], [166, 35, 236, 255]);
+    assert.deepEqual([...highlighted.subarray(0, 4)], [255, 255, 255, 255]);
+    const stored = JSON.parse(await readFile(path.join(output, 'results.json'), 'utf8'));
+    assertPortablePaths(stored);
+    assert.deepEqual(stored.reportImages, { maxHeight: 4, imageFormat: 'webp' });
+    assert.deepEqual(stored.results[0].reportImages, payload.reportImages);
+    assert.equal(stored.summary.comparedPixels, 64); assert.equal(stored.summary.changedPixels, 4);
+    assert.equal(stored.summary.changedPercentage, 6.25);
+    assert.deepEqual([stored.results[0].before.width, stored.results[0].before.height], [8, 8]);
+    assert.deepEqual([stored.results[0].after.width, stored.results[0].after.height], [8, 8]);
+    for (const asset of Object.values(stored.results[0].artifacts)) {
+      assert.match(asset, /\.webp$/);
+      const filename = path.join(output, asset);
+      const metadata = await sharp(filename).metadata();
+      assert.deepEqual([metadata.format, metadata.width, metadata.height], ['webp', 4, 4]);
+      const bytes = await readFile(filename);
+      assert.equal(bytes.subarray(0, 4).toString(), 'RIFF');
+      assert.equal(bytes.subarray(8, 12).toString(), 'WEBP');
+    }
+    const html = await readFile(path.join(output, 'index.html'), 'utf8');
+    assertPortablePaths(html);
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    assert.ok(embedded); assert.deepEqual(JSON.parse(embedded[1]), stored);
+    assert.deepEqual(await readFile(baseline), originals[0]);
+    assert.deepEqual(await readFile(current), originals[1]);
+  });
+  await check('installed relative reports sanitize image-processing errors and their input paths', async () => {
+    const root = path.join(inputDir, 'private error screenshots');
+    const baseline = path.join(root, 'baseline'); const current = path.join(root, 'current');
+    await mkdir(baseline, { recursive: true }); await mkdir(current);
+    await copyFile(before, path.join(baseline, 'broken.png'));
+    await writeFile(path.join(current, 'broken.png'), 'invalid image');
+    const output = path.join(inputDir, 'portable error report');
+    const payload = runJSON([root, '--relative', '--html', '--output-dir', output,
+      '--max-height', '4', '--image-format', 'webp'], 2);
+    assert.equal(payload.status, 'error'); assert.equal(payload.summary.errors, 1);
+    const entry = payload.results[0];
+    assert.equal(entry.status, 'error'); assert.equal(entry.artifacts, null);
+    assert.match(entry.error.message, /decode|image|unsupported/i);
+    assertPortablePaths(payload);
+    assert.deepEqual(JSON.parse(await readFile(path.join(output, 'results.json'), 'utf8')), payload);
+    assertPortablePaths(await readFile(path.join(output, 'index.html'), 'utf8'));
+    const missing = runJSON([path.join(root, 'missing private screenshot.png'), after, '--relative'], 2);
+    assert.equal(missing.status, 'error'); assertPortablePaths(missing);
+  });
+  await check('installed per-ID masks combine with global masks without suppressing other screenshots', async () => {
+    const root = path.join(inputDir, 'dynamic data screenshots');
+    const baseline = path.join(root, 'baseline'); const current = path.join(root, 'current');
+    for (const side of [baseline, current]) {
+      await mkdir(path.join(side, 'prices'), { recursive: true });
+      await mkdir(path.join(side, 'dates'), { recursive: true });
+    }
+    for (const id of ['prices/home.png', 'dates/home.png', 'plain.png']) {
+      await copyFile(before, path.join(baseline, id)); await copyFile(after, path.join(current, id));
+    }
+    const global = { x: 0, y: 0, width: 1, height: 1 };
+    const price = { x: 3, y: 2, width: 2, height: 2 };
+    const date = { x: 3, y: 2, width: 1, height: 2 };
+    await writeFile(path.join(root, 'diffglow.config.json'), JSON.stringify({
+      ignoreRegions: [global], ignoreRegionsById: { 'prices/**': [price], 'dates/**': [date] }
+    }));
+    const output = path.join(inputDir, 'dynamic data share report');
+    const payload = runJSON([root, '--relative', '--html', '--output-dir', output,
+      '--max-height', '4', '--image-format', 'webp', '--fail-on-diff'], 1);
+    assert.equal(payload.summary.identical, 1); assert.equal(payload.summary.different, 2);
+    assert.equal(payload.summary.ignoredPixels, 9); assert.equal(payload.summary.comparedPixels, 135);
+    assert.equal(payload.summary.changedPixels, 6);
+    const entries = Object.fromEntries(payload.results.map(entry => [entry.id, entry]));
+    assert.equal(entries['prices/home.png'].status, 'identical');
+    assert.equal(entries['dates/home.png'].stats.changedPixels, 2);
+    assert.equal(entries['plain.png'].stats.changedPixels, 4);
+    assert.deepEqual(entries['prices/home.png'].comparison.ignoreRegions, [global, price]);
+    assert.deepEqual(entries['dates/home.png'].comparison.ignoreRegions, [global, date]);
+    assert.deepEqual(entries['plain.png'].comparison.ignoreRegions, [global]);
+    assertPortablePaths(payload);
+  });
+  await check('installed invalid report-image options return exit 2 before modifying output', async () => {
+    const standalone = path.join(inputDir, 'preserved full size.png');
+    const sentinel = Buffer.from('preserve this standalone output');
+    await writeFile(standalone, sentinel);
+    const report = path.join(inputDir, 'invalid share report');
+    for (const args of [
+      ['--max-height', ''], ['--max-height', '0'], ['--max-height=-1'], ['--max-height', '1.5'],
+      ['--max-height', 'Infinity'], ['--max-height', '9007199254740992'],
+      ['--image-format', 'jpeg'], ['--image-format', 'WebP'], ['--image-format', '']
+    ]) {
+      const result = runJSON([before, after, '--relative', '--html', '--output', standalone,
+        '--output-dir', report, ...args], 2);
+      assert.match(result.error.message, /max.height|image.format/i);
+      assertPortablePaths(result);
+      assert.deepEqual(await readFile(standalone), sentinel);
+      await assert.rejects(access(report), { code: 'ENOENT' });
+    }
   });
   await check('added and removed areas at threshold 1', async () => {
     const small = await image('small.png', 2, 3);

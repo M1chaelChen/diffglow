@@ -4,7 +4,7 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readCandidate, registry, releaseContext, waitForPublication } from './release-utils.mjs';
+import { readCandidate, registry, releaseContext, releaseChannel, waitForPublication } from './release-utils.mjs';
 
 const context = releaseContext();
 const candidate = await readCandidate(context);
@@ -32,5 +32,5 @@ try {
     integrity: candidate.integrity, checks: checks.checks
   }, null, 2) + '\n');
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `### Registry verification passed\n\nFresh production installation of diffglow@${context.version} passed ${checks.checks.length} installed CLI checks. Registry integrity and alpha tag match the audited candidate.\n`);
+    `### Registry verification passed\n\nFresh production installation of diffglow@${context.version} passed ${checks.checks.length} installed CLI checks. Registry integrity and ${releaseChannel(context.version)} tag match the audited candidate.\n`);
 } finally { await rm(consumer, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }

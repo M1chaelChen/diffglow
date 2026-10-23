@@ -12,8 +12,10 @@ reporting channel without disclosing vulnerability details.
 
 ## Supported versions
 
-Security fixes target the latest alpha release. Update to the newest alpha when a
-fix is published; the project does not yet maintain older release branches.
+Security fixes target the latest stable release. Update to the newest stable
+version when a fix is published; the project does not maintain older release
+branches. Prereleases receive fixes through a subsequent prerelease or stable
+release.
 
 ## Local image handling
 

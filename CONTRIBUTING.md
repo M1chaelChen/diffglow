@@ -1,8 +1,8 @@
 # Contributing to Diffglow
 
-Diffglow's first release is a local screenshot comparison CLI. Keep changes small
-and describe the visible behavior they improve. Discuss larger features in an
-issue before implementing them.
+Diffglow is a local screenshot comparison CLI. Keep changes small and describe the
+visible behavior they improve. Discuss larger features in an issue before
+implementing them.
 
 ## Development
 
@@ -61,9 +61,9 @@ not part of the CLI.
 - Do not skip all overwrite-protection checks when Windows symlink privileges are
   unavailable. Ordinary paths and hard links must still be tested.
 
-The comparison implementation is internal. This alpha promises the command-line
-interface, not a supported library import. Dependency changes must update the lock
-file and third-party license inventory.
+The supported interface is the CLI. The comparison implementation is internal and
+is not a supported library import. Dependency changes must update the lockfile and
+third-party license inventory.
 
 ## Releases
 
@@ -73,5 +73,7 @@ separate maintainer action. For a hosted release candidate, the manually dispatc
 (`publish_to_npm: false`). It tests the same canonical tarball across all six
 platform/Node combinations. Publishing requires `publish_to_npm: true` and approval
 of the protected `npm-publish` environment. OIDC publication is followed by a fresh
-registry installation and a GitHub prerelease; no stored npm token is needed.
+registry installation and a GitHub release (a prerelease for alpha versions); no
+stored npm token is needed. Stable versions publish to `latest`; explicit
+`x.y.z-alpha.n` versions publish to `alpha`.
 See [the release procedure](docs/releasing.md) for setup, approval, and retry steps.

@@ -8,17 +8,17 @@ magenta by default. You can choose the highlight color. Images stay on your mach
 
 ## Quick start
 
-Requires Node.js 22 or newer. The alpha targets Linux, macOS, and Windows, with CI
-coverage configured for Node.js 22 and 24.
+Requires Node.js 22 or newer. Diffglow supports Linux, macOS, and Windows, with CI
+coverage for Node.js 22 and 24.
 
 ```bash
-npx --yes diffglow@alpha before.png after.png --output highlighted.png
+npx --yes diffglow before.png after.png --output highlighted.png
 ```
 
 Or install the command:
 
 ```bash
-npm install --global diffglow@alpha
+npm install --global diffglow
 diffglow before.png after.png --output highlighted.png
 ```
 
@@ -29,10 +29,10 @@ diffglow "before screenshot.png" "after screenshot.jpg" -o "my diff.png"
 ```
 
 The command prints the changed-pixel count, changed percentage, and absolute
-output path. The default output is `diff.png` in the current directory. Output is
-always PNG; missing parent directories are created. An existing result can be
-replaced, but neither input can be overwritten, including through a symbolic link
-or hard link.
+output path. The default output is `diff.png` in the current directory. This
+single-pair output is always PNG; missing parent directories are created. An
+existing result can be replaced, but neither input can be overwritten, including
+through a symbolic link or hard link.
 
 ## Integrate with an AI coding agent
 
@@ -44,7 +44,7 @@ Install Diffglow in your project, then install its bundled skill with the
 [Skills CLI](https://github.com/vercel-labs/skills):
 
 ```bash
-npm install --save-dev --save-exact diffglow@alpha
+npm install --save-dev --save-exact diffglow
 npx skills add ./node_modules/diffglow/skills/diffglow --skill diffglow
 ```
 
@@ -77,6 +77,9 @@ remain visible in the verification report.
 | `--config <file>` | Load JSON folder names, matching rules, threshold, highlight color, and ignored regions. |
 | `--output-dir <dir>` | Batch/HTML report directory; defaults to `diffglow-report`. |
 | `--html` | Generate an offline HTML review page and screenshot assets. |
+| `--relative` | Present portable paths in text, JSON, and HTML instead of local absolute paths. |
+| `--max-height <pixels>` | Limit report asset height without enlarging images; a positive integer. Requires `--html` for a single pair. |
+| `--image-format <png\|webp>` | Report asset format; defaults to PNG. WebP is lossless. Requires `--html` for a single pair. |
 | `-h, --help` | Show usage. |
 | `-v, --version` | Show the installed version. |
 
@@ -132,10 +135,16 @@ the current screenshot stay transparent. JSON and HTML reports record the region
 and ignored-pixel count. If nothing remains to compare, the percentage is `0` and
 `--fail-on-diff` exits `0`; this makes no visual assertion about the ignored image.
 
-The same regions apply to every comparison in a folder or manifest run. Use
-separate runs for different screenshot geometries. There is no automatic clock
-detection or per-pair region override. Keep masks narrow enough to retain the
-visual coverage you need.
+Global regions apply to every comparison in a run. For prices, dates, or balances
+that appear in different places, configure `ignoreRegionsById` rules or add
+`ignoreRegions` to individual manifest pairs, as shown below. Keep masks narrow
+enough to retain the visual coverage you need.
+
+Masks affect comparison only: **they do not redact screenshot contents**. Baseline
+and current previews still show the original prices, dates, balances, and other
+content in those areas. Diffglow receives raster images, so it cannot resolve DOM
+elements or selectors. Your screenshot capture tool can measure an element's
+rectangle and supply those pixel coordinates in the manifest.
 
 ## Compare folders or multiple files
 
@@ -176,7 +185,12 @@ regardless of the directory where you run the CLI:
 {
   "pairs": [
     { "id": "home", "before": "approved/home.png", "after": "captures/home.png" },
-    { "id": "settings", "before": "older/settings.jpg", "after": "newer/settings.png" }
+    {
+      "id": "settings",
+      "before": "older/settings.jpg",
+      "after": "newer/settings.png",
+      "ignoreRegions": [{ "x": 320, "y": 80, "width": 180, "height": 32 }]
+    }
   ]
 }
 ```
@@ -187,6 +201,9 @@ diffglow --manifest pairs.json --html --output-dir visual-results --json
 
 Each pair requires a unique, nonempty `id` and both file paths. An explicitly
 listed file that cannot be read is an error, rather than an added/removed entry.
+Optional pair `ignoreRegions` add to the global rectangles and all matching
+`ignoreRegionsById` rules. They use the same screenshot-pixel coordinates and
+validation as `--ignore-region`.
 Do not combine `--manifest` with positional inputs, or mix files and directories.
 `--output` remains a single-pair PNG option; use `--output-dir` for batches.
 
@@ -209,16 +226,31 @@ Unknown settings and invalid patterns are rejected before comparisons start.
   "currentPattern": "{key}",
   "threshold": 0.1,
   "highlightColor": "#ff00ff",
-  "ignoreRegions": [{ "x": 0, "y": 0, "width": 160, "height": 60 }]
+  "ignoreRegions": [{ "x": 0, "y": 0, "width": 160, "height": 60 }],
+  "ignoreRegionsById": {
+    "catalog/*.png": [{ "x": 720, "y": 340, "width": 180, "height": 48 }],
+    "**/history.png": [{ "x": 40, "y": 120, "width": 220, "height": 32 }]
+  }
 }
 ```
 
 Defaults are `baselineDir: "baseline"`, `currentDir: "current"`, and the other
-values above with an empty exclusion list and `ignoreRegions: []`. CLI
+values above with an empty exclusion list, `ignoreRegions: []`, and
+`ignoreRegionsById: {}`. CLI
 `--threshold` and `--highlight-color` override their respective config settings.
-Providing any `--ignore-region` flags replaces the configured region array with
-the CLI rectangles. The configuration must still be valid even when overridden.
+Providing any `--ignore-region` flags replaces the configured global region array
+with the CLI rectangles; matching ID rules and manifest pair regions still apply.
+The configuration must still be valid even when overridden or a rule matches no
+comparisons.
 Explicit manifest pairs are not filtered or renamed by folder matching rules.
+
+In the example, catalog comparisons ignore a price rectangle, and history
+comparisons ignore a date rectangle. Rule patterns match the comparison `id`:
+the full relative filename by default, the extracted `{key}` with pairing
+templates, or the explicit manifest ID. All matching rules add their rectangles;
+overlaps still count once. Manifest IDs retain their original text, with path
+separators normalized to `/` for matching. A single file pair has the ID
+`comparison`, which can also be targeted by a rule.
 
 Globs use forward slashes: `*` matches within a path segment, `**` matches complete
 directory segments, and `?` matches one character. Brace expansion, character
@@ -246,15 +278,18 @@ input error; an empty baseline with screenshots in current is a valid added batc
 
 ### Batch results and HTML reports
 
-Every batch writes `results.json` and highlighted PNGs. With `--json`, stdout is a
-single batch document containing `mode: "batch"`, overall status, artifact paths,
+Every batch writes `results.json` and highlighted report images (PNG by default).
+With `--json`, stdout is a single batch document containing `mode: "batch"`,
+overall status, artifact paths,
 summary counts/pixel totals, per-file results, and the final exit code. Successful
 entries reuse the single-pair statistics and include an `id` and relative
 `artifacts` paths. Added/removed entries have a null missing input; failed entries
 contain an error message and null artifacts. Results are sorted by identity.
 The root `rendering` object records the selected highlight color and opacity.
-`comparison.ignoreRegions` records the configured rectangles, and
-`summary.ignoredPixels` sums ignored pixels across successful comparisons.
+Root `comparison.ignoreRegions` records the selected global rectangles, while
+each result records its full effective regions, including matching ID rules and
+manifest pair regions. `summary.ignoredPixels` sums ignored pixels across
+successful comparisons.
 
 Aggregate changed percentage is the sum of changed pixels divided by the sum of
 compared pixels, not the average of individual percentages. Failed entries are
@@ -262,9 +297,10 @@ excluded from pixel totals and counted separately. Processing continues after an
 individual failure, and exit `2` takes precedence over `--fail-on-diff` exit `1`.
 
 Add `--html` to generate `index.html` with summary counts, search, status filters,
-and **Baseline / Current / Highlighted diff** panels. Click an image for full
-resolution or expand a comparison for detailed statistics. HTML is opt-in and also
-works with a single file pair:
+and **Baseline / Current** panels, plus a **Highlighted diff** panel when changes
+exist. Click an image to open its stored asset or expand a comparison for detailed
+statistics. Assets use full resolution by default. HTML is opt-in and also works
+with a single file pair:
 
 ```bash
 diffglow before.png after.png -o highlighted.png --html --output-dir review
@@ -288,9 +324,9 @@ visual-results/
 
 Open `index.html` directly in a browser. Share or upload the **whole report
 directory**, including `assets/`. The page needs no server, network access, or
-original screenshot files. Preview images use the normalized pixels actually
-compared, with orientation applied. Single-pair JSON stdout keeps its original
-shape, including when HTML is requested; a single HTML run's saved `results.json`
+original screenshot files. Preview images derive from the normalized pixels
+actually compared, with orientation applied. Single-pair JSON stdout keeps its
+original shape, including when HTML is requested; a single HTML run's saved `results.json`
 uses the run envelope with `mode: "single"`.
 
 Choose a dedicated report directory: it must be new, empty, or marked as
@@ -301,12 +337,49 @@ directory cannot equal or contain inputs, and is excluded from folder discovery.
 Comparisons run sequentially to bound memory use. In CI, upload the complete
 report directory even when comparison exits with differences or per-file errors.
 
+### Share portable, smaller reports
+
+Use `--relative` to remove local absolute paths from generated HTML and JSON,
+including embedded report data and native processing errors. Bundled report paths
+point to files within the report directory; ordinary CLI paths use portable
+labels relative to the working directory, with external paths shortened. The
+default remains absolute paths for existing integrations. This changes path
+presentation only, without moving inputs or changing overwrite safeguards.
+
+Combine it with smaller report assets:
+
+```bash
+diffglow baseline/ current/ --html --relative \
+  --max-height 1200 --image-format webp --output-dir share-report
+```
+
+`--max-height` preserves aspect ratio and only shrinks taller assets. WebP uses
+lossless encoding; its size benefit depends on the screenshot. These settings
+apply to bundled baseline, current, and highlighted report assets, including
+batches without HTML. They never resize the pixels used for comparison: counts,
+bounds, ignored regions, percentages, and reported source dimensions remain at
+full screenshot resolution. Resizing itself reduces the detail available in the
+shared images; use PNG without a height limit when reviewers need every pixel.
+
+For a single file pair, asset options require `--html`:
+
+```bash
+diffglow before.png after.png --html --relative --max-height 1200 \
+  --image-format webp --output-dir share-report -o highlighted.png
+```
+
+The ordinary `--output` file remains a full-resolution PNG. Only the report's
+bundled copy is resized or converted. Share the complete report directory.
+`--relative` does not alter user-supplied comparison IDs or image contents;
+inspect both before sharing. Ignored areas remain visible in preview images.
+
 ## Image behavior
 
 - EXIF orientation and color space are normalized to sRGB before comparison.
   Transparency is preserved and compared using pixelmatch's transparency handling.
-- Images align at the top-left without resizing. Output dimensions use the larger
-  width and height of the two inputs.
+- Comparison images align at the top-left without resizing. The full-resolution
+  highlighted canvas uses the larger width and height of the two inputs; report
+  copies may be reduced with `--max-height`.
 - Added and removed areas outside ignored regions count as changes, regardless of
   threshold. Removed content from the first screenshot remains visible under the
   highlight tint.
@@ -318,7 +391,7 @@ report directory even when comparison exits with differences or per-file errors.
   pixels. Animated and multi-page images are rejected.
 
 Diffglow accepts screenshots from websites, mobile browsers, or native mobile
-applications as image files. This alpha provides image comparison only; your
+applications as image files. Diffglow provides image comparison; your
 existing tools supply the screenshots. It does not capture screens, manage
 baselines, or provide a JavaScript library API.
 
@@ -366,7 +439,12 @@ A comparison with a changed rectangle might report:
 }
 ```
 
-Paths are absolute and dimensions reflect normalized image orientation.
+Paths are absolute by default; `--relative` opts into portable presentation.
+Input dimensions reflect normalized image orientation and remain full-resolution
+when report assets are resized. Output dimensions describe the file at
+`output.path`: a bundled asset can be smaller, while the ordinary single-pair PNG
+keeps its original size. `reportImages.dimensions` records the stored asset sizes
+when report image options are customized.
 The additive `rendering` object records the normalized overlay settings in
 single-pair and batch reports; the JSON schema version remains `1`.
 `modifiedPixels` counts changed pixels within the overlapping image area;
@@ -421,7 +499,7 @@ the comparison:
 
 ```yaml
 - name: Compare screenshots
-  run: npx --yes diffglow@0.1.0-alpha.5 before.png after.png --output artifacts/diff.png --fail-on-diff
+  run: npx --yes diffglow@0.1.0 before.png after.png --output artifacts/diff.png --fail-on-diff
 
 - name: Upload highlighted comparison
   if: always()

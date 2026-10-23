@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DEFAULT_HIGHLIGHT_COLOR, parseHighlightColor } from './color.js';
 import { parseIgnoreRegions, type IgnoreRegion } from './regions.js';
 
-export interface Pair { id: string; before: string | null; after: string | null }
+export interface Pair { id: string; before: string | null; after: string | null; ignoreRegions?: IgnoreRegion[] }
 export interface Configuration {
   baselineDir: string;
   currentDir: string;
@@ -14,6 +14,7 @@ export interface Configuration {
   threshold: number;
   highlightColor: string;
   ignoreRegions: IgnoreRegion[];
+  ignoreRegionsById: Record<string, IgnoreRegion[]>;
 }
 export interface InputSelection {
   mode: 'single' | 'batch';
@@ -25,7 +26,7 @@ export interface InputSelection {
 }
 export const defaults: Configuration = {
   baselineDir: 'baseline', currentDir: 'current', include: ['**/*'], exclude: [],
-  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1, highlightColor: DEFAULT_HIGHLIGHT_COLOR, ignoreRegions: []
+  baselinePattern: '{key}', currentPattern: '{key}', threshold: 0.1, highlightColor: DEFAULT_HIGHLIGHT_COLOR, ignoreRegions: [], ignoreRegionsById: {}
 };
 
 export function missing(error: unknown): boolean {
@@ -91,7 +92,7 @@ async function jsonFile(filename: string): Promise<unknown> {
   catch (error) { throw new Error(`Cannot read JSON file "${filename}": ${error instanceof Error ? error.message : String(error)}`); }
 }
 async function configuration(filename?: string): Promise<Configuration> {
-  const config: Configuration = { ...defaults, include: [...defaults.include], exclude: [], ignoreRegions: [] };
+  const config: Configuration = { ...defaults, include: [...defaults.include], exclude: [], ignoreRegions: [], ignoreRegionsById: {} };
   if (filename) {
     const data = await jsonFile(filename);
     if (!object(data)) throw new Error('Configuration must be a JSON object.');
@@ -105,6 +106,12 @@ async function configuration(filename?: string): Promise<Configuration> {
         config.highlightColor = parseHighlightColor(value).hex;
       } else if (key === 'ignoreRegions') {
         config.ignoreRegions = parseIgnoreRegions(value);
+      } else if (key === 'ignoreRegionsById') {
+        if (!object(value)) throw new Error('ignoreRegionsById must be an object mapping comparison ID globs to arrays of ignore regions.');
+        config.ignoreRegionsById = Object.fromEntries(Object.entries(value).map(([pattern, regions]) => {
+          globMatcher(pattern);
+          return [pattern, parseIgnoreRegions(regions)];
+        }));
       } else if (key === 'include' || key === 'exclude') {
         if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0) || (key === 'include' && value.length === 0)) {
           throw new Error(`${key} must be an array of nonempty glob strings${key === 'include' ? ' with at least one entry' : ''}.`);
@@ -162,14 +169,17 @@ async function manifestPairs(filename: string): Promise<Pair[]> {
   }
   const seen = new Set<string>();
   return data.pairs.map((entry: unknown) => {
-    if (!object(entry) || Object.keys(entry).some(key => !['id', 'before', 'after'].includes(key)) ||
+    if (!object(entry) || Object.keys(entry).some(key => !['id', 'before', 'after', 'ignoreRegions'].includes(key)) ||
       ['id', 'before', 'after'].some(key => typeof entry[key] !== 'string' || !(entry[key] as string).trim())) {
       throw new Error('Each manifest pair requires nonempty id, before, and after strings.');
     }
     const id = entry.id as string;
     if (seen.has(id)) throw new Error(`Duplicate manifest identity: ${id}`);
     seen.add(id);
-    return { id, before: path.resolve(path.dirname(manifest), entry.before as string), after: path.resolve(path.dirname(manifest), entry.after as string) };
+    return {
+      id, before: path.resolve(path.dirname(manifest), entry.before as string), after: path.resolve(path.dirname(manifest), entry.after as string),
+      ignoreRegions: Object.hasOwn(entry, 'ignoreRegions') ? parseIgnoreRegions(entry.ignoreRegions) : []
+    };
   });
 }
 
@@ -199,10 +209,17 @@ export async function selectInputs(positionals: string[], options: {
   const config = await configuration(configFile);
   const highlightColor = parseHighlightColor(options.highlightColor ?? config.highlightColor).hex;
   const ignoreRegions = parseIgnoreRegions(options.ignoreRegions ?? config.ignoreRegions);
+  const ignoreRules = Object.entries(config.ignoreRegionsById).map(([pattern, regions]) => ({ matcher: globMatcher(pattern), regions }));
+  function pairRegions(pair: Pair): Pair {
+    const id = pair.id.replaceAll('\\', '/');
+    return { ...pair, ignoreRegions: parseIgnoreRegions([
+      ...ignoreRegions, ...ignoreRules.filter(rule => rule.matcher.test(id)).flatMap(rule => rule.regions), ...(pair.ignoreRegions ?? [])
+    ]) };
+  }
   const threshold = options.threshold ?? config.threshold;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('Threshold must be a finite number between 0 and 1.');
   if (mode === 'single') {
-    return { mode, pairs: [{ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) }], inputRoots: [], threshold, highlightColor, ignoreRegions };
+    return { mode, pairs: [pairRegions({ id: 'comparison', before: path.resolve(positionals[0]), after: path.resolve(positionals[1]) })], inputRoots: [], threshold, highlightColor, ignoreRegions };
   }
   let pairs: Pair[];
   if (options.manifest) pairs = await manifestPairs(options.manifest);
@@ -216,5 +233,5 @@ export async function selectInputs(positionals: string[], options: {
     if (!pairs.length) throw new Error('No PNG/JPEG screenshots matched the configured folders and patterns.');
   }
   pairs.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  return { mode: 'batch', pairs, inputRoots: roots, threshold, highlightColor, ignoreRegions };
+  return { mode: 'batch', pairs: pairs.map(pairRegions), inputRoots: roots, threshold, highlightColor, ignoreRegions };
 }

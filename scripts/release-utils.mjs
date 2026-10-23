@@ -18,8 +18,24 @@ export function compareAlphas(left, right) {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
   return 0;
 }
+export function versionParts(version) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-alpha\.(0|[1-9]\d*))?$/.exec(version ?? '');
+  assert.ok(match, 'An explicit x.y.z or x.y.z-alpha.n version is required.');
+  return { numbers: match.slice(1, 4).map(BigInt), alpha: match[4] === undefined ? null : BigInt(match[4]) };
+}
+export function releaseChannel(version) {
+  return versionParts(version).alpha === null ? 'latest' : 'alpha';
+}
+export function compareVersions(left, right) {
+  const a = versionParts(left), b = versionParts(right);
+  for (let i = 0; i < a.numbers.length; i++) if (a.numbers[i] !== b.numbers[i]) return a.numbers[i] > b.numbers[i] ? 1 : -1;
+  if (a.alpha === b.alpha) return 0;
+  if (a.alpha === null) return 1;
+  if (b.alpha === null) return -1;
+  return a.alpha > b.alpha ? 1 : -1;
+}
 export function releaseContext(env = process.env) {
-  alphaParts(env.EXPECTED_VERSION);
+  versionParts(env.EXPECTED_VERSION);
   assert.match(env.EXPECTED_SHA ?? '', /^[a-f0-9]{40}$/);
   assert.equal(env.GITHUB_REPOSITORY, repository);
   assert.equal(env.GITHUB_REF, 'refs/heads/main');
@@ -29,7 +45,7 @@ export function releaseContext(env = process.env) {
     directory: path.resolve(env.RELEASE_DIRECTORY ?? `artifacts/release/${env.EXPECTED_VERSION}`) };
 }
 export async function readCandidate({ directory, version, sha }) {
-  alphaParts(version);
+  versionParts(version);
   const filename = `diffglow-${version}.tgz`;
   const tarball = path.join(directory, filename);
   const bytes = await readFile(tarball);
@@ -60,20 +76,24 @@ export async function registryJSON(suffix, { fetcher = fetch, wait = sleep, atte
 }
 export function assertPublished(metadata, version, integrity) {
   assert.equal(metadata?.name, 'diffglow'); assert.equal(metadata?.version, version);
-  assert.equal(metadata?.dist?.integrity, integrity, 'Registry contains different bytes; use a new alpha version.');
+  assert.equal(metadata?.dist?.integrity, integrity, 'Registry contains different bytes; use a new version.');
 }
 export function publishDecision(metadata, tags, version, integrity) {
+  const channel = releaseChannel(version);
+  const compare = channel === 'alpha' ? compareAlphas : compareVersions;
   if (metadata !== null) {
     assertPublished(metadata, version, integrity);
-    assert.equal(tags?.alpha, version, 'This version exists but alpha points elsewhere; refusing to move the channel.');
+    assert.equal(tags?.[channel], version, `This version exists but ${channel} points elsewhere; refusing to move the channel.`);
     return false;
   }
-  if (tags?.alpha) assert.ok(compareAlphas(version, tags.alpha) > 0, 'Refusing to publish an older alpha or move alpha backward.');
+  if (tags?.[channel]) assert.ok(compare(version, tags[channel]) > 0, `Refusing to publish an older ${channel} version or move ${channel} backward.`);
   return true;
 }
 export async function waitForPublication(version, integrity, {
   get = registryJSON, wait = sleep, attempts = 30, timeoutMs = 300_000, now = () => performance.now()
 } = {}) {
+  const channel = releaseChannel(version);
+  const compare = channel === 'alpha' ? compareAlphas : compareVersions;
   assert.ok(Number.isSafeInteger(attempts) && attempts > 0, 'Publication attempts must be a positive safe integer.');
   assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0, 'Publication timeout must be a positive finite number.');
   const started = now();
@@ -83,12 +103,12 @@ export async function waitForPublication(version, integrity, {
     const metadata = await get(`/${encodeURIComponent(version)}`);
     if (metadata) assertPublished(metadata, version, integrity);
     const tags = await get('/dist-tags');
-    if (tags?.alpha && compareAlphas(tags.alpha, version) > 0) throw new Error('A newer alpha is already current.');
-    if (metadata && tags?.alpha === version) return metadata;
+    if (tags?.[channel] && compare(tags[channel], version) > 0) throw new Error(`A newer ${channel} version is already current.`);
+    if (metadata && tags?.[channel] === version) return metadata;
     const remaining = timeoutMs - (now() - started);
     if (attempt + 1 === attempts || remaining <= 0) break;
     await wait(Math.min(delay, remaining));
     delay = Math.min(delay * 2, 15_000);
   }
-  throw new Error('npm publication processing did not become visible with matching integrity and alpha tag within the verification budget. Inspect the registry before choosing Re-run failed jobs in the same workflow run; do not republish or create a new candidate.');
+  throw new Error(`npm publication processing did not become visible with matching integrity and ${channel} tag within the verification budget. Inspect the registry before choosing Re-run failed jobs in the same workflow run; do not republish or create a new candidate.`);
 }

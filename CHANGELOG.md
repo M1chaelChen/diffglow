@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0
+
+First stable CLI release, published on the npm `latest` channel.
+
+- Hide the highlighted diff panel for identical comparisons in HTML reports, using
+  the full available width for the baseline and current images.
+- Add `--relative` for portable HTML, JSON, and CLI path presentation, including
+  sanitized native error diagnostics, without changing filesystem safeguards.
+- Reduce shared report assets with `--max-height` and lossless
+  `--image-format webp`, while retaining full-resolution comparison statistics and
+  the ordinary single-pair PNG output.
+- Configure dynamic areas by comparison ID with `ignoreRegionsById` glob rules
+  and per-pair manifest `ignoreRegions`, additive with selected global masks.
+  Comparison masks do not redact screenshot previews or support element selectors.
+
 ## 0.1.0-alpha.5
 
 - Ignore rectangular areas such as mobile clocks with repeatable `--ignore-region`

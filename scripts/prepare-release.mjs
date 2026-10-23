@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { versionParts } from './release-utils.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-if (pkg.name !== 'diffglow' || !/^\d+\.\d+\.\d+-alpha\.\d+$/.test(pkg.version)) {
-  throw new Error('Prepare an explicitly versioned Diffglow alpha release.');
-}
+if (pkg.name !== 'diffglow') throw new Error('Prepare an explicitly versioned Diffglow release.');
+versionParts(pkg.version);
 const directory = path.join(root, 'artifacts', 'release', pkg.version);
 await mkdir(directory, { recursive: true });
 const revision = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root, encoding: 'utf8', windowsHide: true });
